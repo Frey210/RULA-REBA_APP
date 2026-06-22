@@ -1,0 +1,120 @@
+.appShell {
+  min-height: 100vh;
+  display: flex;
+}
+
+.topBar {
+  border-bottom: 1px solid #dde2e4;
+  color: #16302f;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.drawerHeader {
+  padding: 18px 20px;
+  border-bottom: 1px solid #e4e7e8;
+}
+
+.mainPane {
+  flex-grow: 1;
+  min-width: 0;
+  padding: 28px;
+}
+
+.loginPage {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(rgba(247, 248, 250, 0.86), rgba(247, 248, 250, 0.86)),
+    url('/src/assets/hero.png') center / 420px no-repeat;
+}
+
+.loginPanel {
+  width: min(420px, calc(100vw - 32px));
+  padding: 28px;
+  border: 1px solid #dde2e4;
+}
+
+.metricGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.inlineTitle,
+.pageTitle,
+.rowFlex {
+  display: flex;
+  align-items: center;
+}
+
+.inlineTitle {
+  gap: 8px;
+}
+
+.pageTitle {
+  justify-content: space-between;
+}
+
+.rowFlex {
+  gap: 16px;
+}
+
+.metric,
+.panel {
+  border: 1px solid #dde2e4;
+}
+
+.metric {
+  min-height: 96px;
+  padding: 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.panel {
+  padding: 20px;
+}
+
+.rowLine {
+  min-height: 44px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eef1f2;
+}
+
+.rowLine:last-child {
+  border-bottom: 0;
+}
+
+.eventFeed {
+  min-height: 420px;
+  max-height: 58vh;
+  overflow: auto;
+  background: #111715;
+  color: #d7efe4;
+  padding: 14px;
+  border-radius: 8px;
+}
+
+.eventFeed pre {
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.emptyState {
+  min-height: 300px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+}
+
+@media (max-width: 1180px) {
+  .metricGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
