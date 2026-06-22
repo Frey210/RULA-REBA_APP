@@ -3,9 +3,12 @@ from typing import Any
 import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
 from app.core.security import decode_access_token
+from app.db.session import SessionLocal
 from app.schemas.edge import EdgeDetectionEvent, EdgeHeartbeatEvent, WebSocketAck, WebSocketError
+from app.services.detection_ingest import persist_detection_event
 from app.services.live_hub import live_hub
 
 ws_router = APIRouter()
@@ -37,6 +40,7 @@ async def edge_ingest(websocket: WebSocket, cam_id: str) -> None:
                         ).model_dump()
                     )
                     continue
+                _persist_event(event)
                 await live_hub.broadcast_session(event.session_id, _desktop_detection_event(event))
                 await websocket.send_json(WebSocketAck().model_dump())
                 continue
@@ -72,6 +76,14 @@ def _is_valid_access_token(token: str | None) -> bool:
     except jwt.PyJWTError:
         return False
     return True
+
+
+def _persist_event(event: EdgeDetectionEvent) -> int:
+    db: Session = SessionLocal()
+    try:
+        return persist_detection_event(db, event)
+    finally:
+        db.close()
 
 
 def _desktop_detection_event(event: EdgeDetectionEvent) -> dict[str, Any]:

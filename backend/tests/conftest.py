@@ -3,26 +3,17 @@ from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 os.environ["DATABASE_URL"] = "sqlite://"
 
 from app.db.base import Base  # noqa: E402
-from app.db.session import get_db  # noqa: E402
+from app.db.session import SessionLocal, engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
-
-engine = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def override_get_db() -> Generator[Session, None, None]:
-    db = TestingSessionLocal()
+    db = SessionLocal()
     try:
         yield db
     finally:
@@ -43,3 +34,11 @@ def reset_db() -> Generator[None, None, None]:
 def client() -> TestClient:
     return TestClient(app)
 
+
+@pytest.fixture
+def db_session() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
