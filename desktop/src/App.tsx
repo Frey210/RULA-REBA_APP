@@ -429,6 +429,7 @@ function SettingsPage({
 
   async function createPairing() {
     setLoading(true)
+    setMessage(null)
     try {
       const nextPairing = await apiRequest<PairingToken>(
         '/api/v1/device-pairings',
@@ -436,6 +437,9 @@ function SettingsPage({
         token,
       )
       setPairing(nextPairing)
+      setMessage('Pairing code created. Select a discovered device and click Pair.')
+    } catch (err) {
+      setMessage(err instanceof Error ? `Create pairing code failed: ${err.message}` : 'Create pairing code failed.')
     } finally {
       setLoading(false)
     }
@@ -470,11 +474,12 @@ function SettingsPage({
       if (info.service !== 'ergoquipt-edge') {
         throw new Error('Not an ErgoQuipt edge device')
       }
+      const parsedUrl = new URL(baseUrl)
       const device = {
         cam_id: info.cam_id,
         hostname: info.hostname,
-        address: new URL(baseUrl).hostname,
-        port: Number(new URL(baseUrl).port || 8765),
+        address: parsedUrl.hostname,
+        port: Number(parsedUrl.port || 8765),
         status: info.status,
         paired: info.paired,
         baseUrl,
@@ -503,29 +508,56 @@ function SettingsPage({
     setLoading(true)
     setMessage(null)
     try {
-      const result = await window.ergoquipt?.pairDevice({
-        baseUrl: device.baseUrl,
-        pairingCode: pairing.pairing_code,
-        backendUrl: backendReachableUrl,
-      })
+      const result = window.ergoquipt?.pairDevice
+        ? await window.ergoquipt.pairDevice({
+            baseUrl: device.baseUrl,
+            pairingCode: pairing.pairing_code,
+            backendUrl: backendReachableUrl,
+          })
+        : await pairDeviceFromRenderer(device.baseUrl, pairing.pairing_code, backendReachableUrl)
       setMessage(`Paired ${result?.cam_id ?? device.cam_id}`)
+      setPairing(null)
+      await probeDevice(device.baseUrl)
       await refreshData()
+    } catch (err) {
+      setMessage(err instanceof Error ? `Pairing failed: ${err.message}` : 'Pairing failed.')
     } finally {
       setLoading(false)
     }
   }
 
+  async function probeDevice(baseUrl: string) {
+    const response = await fetch(`${baseUrl}/pairing/info`)
+    if (!response.ok) {
+      return
+    }
+    const info = await response.json()
+    setDevices((current) =>
+      current.map((device) =>
+        device.baseUrl === baseUrl
+          ? {
+              ...device,
+              status: info.status,
+              paired: info.paired,
+            }
+          : device,
+      ),
+    )
+  }
+
   return (
     <Stack spacing={3}>
-      <PageTitle title="Settings" action={<Button onClick={refreshData}>Refresh</Button>} />
+      <PageTitle title="Devices" action={<Button onClick={refreshData}>Refresh</Button>} />
       <Paper className="panel" elevation={0}>
         <Typography variant="h6">Add Edge Camera</Typography>
-        <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
-          Scan the local network, create a pairing code, then pair the selected Raspberry Pi.
-        </Typography>
+        <Box className="pairingSteps" sx={{ my: 2 }}>
+          <Chip size="small" color={devices.length ? 'success' : 'default'} label="1. Scan or probe Raspberry Pi" />
+          <Chip size="small" color={pairing ? 'success' : 'default'} label="2. Create pairing code" />
+          <Chip size="small" color={cameraNodes.length ? 'success' : 'default'} label="3. Pair camera node" />
+        </Box>
         {!isElectron ? (
           <Alert severity="warning" sx={{ mb: 2 }}>
-            Electron bridge is not available. Use the manual IP probe below, or launch with npm run electron.
+            Electron bridge is not available, so automatic LAN scan cannot run here. Manual IP probe and pairing still work.
           </Alert>
         ) : null}
         <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
@@ -578,7 +610,7 @@ function SettingsPage({
               <Chip size="small" label={device.status} />
               <Chip size="small" label={device.paired ? 'paired' : 'unpaired'} color={device.paired ? 'success' : 'default'} />
               <Button size="small" variant="contained" disabled={!pairing || loading} onClick={() => pairDevice(device)}>
-                Pair
+                {pairing ? 'Pair' : 'Create code first'}
               </Button>
             </Box>
           ))
@@ -588,6 +620,24 @@ function SettingsPage({
       </Paper>
     </Stack>
   )
+}
+
+async function pairDeviceFromRenderer(baseUrl: string, pairingCode: string, backendReachableUrl: string) {
+  const response = await fetch(`${baseUrl}/pairing/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pairing_code: pairingCode,
+      backend_url: backendReachableUrl,
+    }),
+  })
+
+  if (!response.ok) {
+    const detail = await response.text()
+    throw new Error(detail || `HTTP ${response.status}`)
+  }
+
+  return (await response.json()) as { status: string; cam_id: string }
 }
 
 function inferBackendUrlFromEdge(edgeBaseUrl: string): string {

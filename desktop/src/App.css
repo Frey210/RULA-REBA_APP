@@ -60,6 +60,12 @@
   gap: 16px;
 }
 
+.pairingSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .metric,
 .panel {
   border: 1px solid #dde2e4;
