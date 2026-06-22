@@ -13,6 +13,10 @@ export type CameraNode = {
   device_type: string | null
   status: string
   paired_at: string | null
+  metadata_json: {
+    display_name?: string
+    [key: string]: unknown
+  }
 }
 
 export type PairingToken = {
@@ -41,10 +45,20 @@ export async function apiRequest<T>(
     headers.set('Authorization', `Bearer ${token}`)
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+    })
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error(`Cannot reach backend at ${API_BASE_URL}. Start FastAPI or check CORS/network settings.`, {
+        cause: err,
+      })
+    }
+    throw err
+  }
 
   if (!response.ok) {
     const detail = await response.text()
@@ -62,4 +76,3 @@ export function liveWebSocketUrl(sessionId: string, token: string): string {
   const base = API_BASE_URL.replace(/^http/, 'ws')
   return `${base}/ws/v1/sessions/${encodeURIComponent(sessionId)}/live?token=${encodeURIComponent(token)}`
 }
-

@@ -66,6 +66,15 @@
   gap: 8px;
 }
 
+.deviceRow {
+  flex-wrap: wrap;
+}
+
+.deviceName {
+  min-width: 220px;
+  flex: 1 1 260px;
+}
+
 .metric,
 .panel {
   border: 1px solid #dde2e4;

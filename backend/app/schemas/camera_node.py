@@ -10,6 +10,10 @@ class CameraNodeCreate(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
+class CameraNodeUpdate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=100)
+
+
 class CameraNodeRead(BaseModel):
     id: str
     cam_id: str
@@ -21,4 +25,3 @@ class CameraNodeRead(BaseModel):
     metadata_json: dict
 
     model_config = {"from_attributes": True}
-

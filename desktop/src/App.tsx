@@ -31,9 +31,13 @@ import {
   History,
   LayoutDashboard,
   LogOut,
+  Pencil,
   RadioReceiver,
+  Save,
   Settings,
   ShieldCheck,
+  Trash2,
+  X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
@@ -597,7 +601,7 @@ function SettingsPage({
           </Alert>
         ) : null}
       </Paper>
-      <DeviceTable cameraNodes={cameraNodes} />
+      <DeviceTable cameraNodes={cameraNodes} token={token} refreshData={refreshData} editable />
       <Paper className="panel" elevation={0}>
         <Typography variant="h6">Discovered Devices</Typography>
         <Divider sx={{ my: 2 }} />
@@ -673,24 +677,157 @@ function SessionList({ title, sessions }: { title: string; sessions: SessionReco
   )
 }
 
-function DeviceTable({ cameraNodes }: { cameraNodes: CameraNode[] }) {
+function DeviceTable({
+  cameraNodes,
+  token,
+  refreshData,
+  editable = false,
+}: {
+  cameraNodes: CameraNode[]
+  token?: string
+  refreshData?: () => Promise<void>
+  editable?: boolean
+}) {
   return (
     <Paper className="panel" elevation={0}>
       <Typography variant="h6">Camera Nodes</Typography>
       <Divider sx={{ my: 2 }} />
       {cameraNodes.length ? (
         cameraNodes.map((node) => (
-          <Box key={node.id} className="rowLine rowFlex">
-            <Camera size={18} />
-            <Typography sx={{ minWidth: 120 }}>{node.cam_id}</Typography>
-            <Typography sx={{ minWidth: 180 }}>{node.hostname ?? '-'}</Typography>
-            <Chip size="small" label={node.status} color={node.status === 'online' ? 'success' : 'default'} />
-          </Box>
+          <DeviceRow
+            key={node.id}
+            node={node}
+            token={token}
+            refreshData={refreshData}
+            editable={editable}
+          />
         ))
       ) : (
         <Typography color="text.secondary">No paired camera nodes.</Typography>
       )}
     </Paper>
+  )
+}
+
+function DeviceRow({
+  node,
+  token,
+  refreshData,
+  editable,
+}: {
+  node: CameraNode
+  token?: string
+  refreshData?: () => Promise<void>
+  editable: boolean
+}) {
+  const currentName = node.metadata_json.display_name ?? node.cam_id
+  const [isEditing, setIsEditing] = useState(false)
+  const [displayName, setDisplayName] = useState(currentName)
+  const [message, setMessage] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setDisplayName(currentName)
+  }, [currentName])
+
+  async function renameDevice() {
+    if (!token || !displayName.trim()) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      await apiRequest<CameraNode>(
+        `/api/v1/camera-nodes/${node.id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ display_name: displayName.trim() }),
+        },
+        token,
+      )
+      setIsEditing(false)
+      await refreshData?.()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Rename failed.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function removeDevice() {
+    if (!token) return
+    const confirmed = window.confirm(`Remove ${currentName} from this account?`)
+    if (!confirmed) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      await apiRequest<void>(`/api/v1/camera-nodes/${node.id}`, { method: 'DELETE' }, token)
+      await refreshData?.()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Remove failed.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function cancelRename() {
+    setDisplayName(currentName)
+    setIsEditing(false)
+    setMessage(null)
+  }
+
+  return (
+    <Box className="rowLine">
+      <Box className="rowFlex deviceRow">
+        <Camera size={18} />
+        <Box className="deviceName">
+          {isEditing ? (
+            <TextField
+              size="small"
+              label="Device name"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              disabled={saving}
+            />
+          ) : (
+            <>
+              <Typography sx={{ fontWeight: 700 }}>{currentName}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                Technical ID: {node.cam_id}
+              </Typography>
+            </>
+          )}
+        </Box>
+        <Typography sx={{ minWidth: 180 }}>{node.hostname ?? '-'}</Typography>
+        <Chip size="small" label={node.status} color={node.status === 'online' ? 'success' : 'default'} />
+        {editable ? (
+          <Stack direction="row" spacing={1} sx={{ ml: 'auto' }}>
+            {isEditing ? (
+              <>
+                <Button size="small" startIcon={<Save size={16} />} disabled={saving} onClick={renameDevice}>
+                  Save
+                </Button>
+                <Button size="small" startIcon={<X size={16} />} disabled={saving} onClick={cancelRename}>
+                  Cancel
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="small" startIcon={<Pencil size={16} />} disabled={saving} onClick={() => setIsEditing(true)}>
+                  Rename
+                </Button>
+                <Button size="small" color="error" startIcon={<Trash2 size={16} />} disabled={saving} onClick={removeDevice}>
+                  Remove
+                </Button>
+              </>
+            )}
+          </Stack>
+        ) : null}
+      </Box>
+      {message ? (
+        <Typography variant="caption" color="error">
+          {message}
+        </Typography>
+      ) : null}
+    </Box>
   )
 }
 

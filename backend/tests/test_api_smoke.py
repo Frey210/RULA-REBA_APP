@@ -77,6 +77,48 @@ def test_pairing_and_session_lifecycle(client: TestClient) -> None:
     assert stop_response.json()["status"] == "review_pending"
 
 
+def test_camera_node_rename_and_delete_are_user_scoped(client: TestClient) -> None:
+    token_a = register_and_login(client, "device-a@example.com")
+    token_b = register_and_login(client, "device-b@example.com")
+
+    pairing_response = client.post("/api/v1/device-pairings", headers=auth_header(token_a))
+    pairing_code = pairing_response.json()["pairing_code"]
+
+    complete_response = client.post(
+        "/api/v1/device-pairings/complete",
+        json={
+            "pairing_code": pairing_code,
+            "cam_id": "CAM_01",
+            "hostname": "ergoquipt-rr",
+            "device_type": "raspberry_pi_5_hailo8",
+            "metadata": {},
+        },
+    )
+    assert complete_response.status_code == 200
+
+    camera = client.get("/api/v1/camera-nodes", headers=auth_header(token_a)).json()[0]
+    camera_id = camera["id"]
+
+    forbidden = client.patch(
+        f"/api/v1/camera-nodes/{camera_id}",
+        headers=auth_header(token_b),
+        json={"display_name": "Other user camera"},
+    )
+    assert forbidden.status_code == 404
+
+    renamed = client.patch(
+        f"/api/v1/camera-nodes/{camera_id}",
+        headers=auth_header(token_a),
+        json={"display_name": "Packing Station Camera"},
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["metadata_json"]["display_name"] == "Packing Station Camera"
+
+    removed = client.delete(f"/api/v1/camera-nodes/{camera_id}", headers=auth_header(token_a))
+    assert removed.status_code == 204
+    assert client.get("/api/v1/camera-nodes", headers=auth_header(token_a)).json() == []
+
+
 def test_scoring_preview_requires_auth_and_returns_score(client: TestClient) -> None:
     unauthenticated = client.post(
         "/api/v1/scoring/preview",
@@ -112,4 +154,3 @@ def test_scoring_preview_requires_auth_and_returns_score(client: TestClient) -> 
     assert response.status_code == 200
     assert response.json()["assessment_type"] == "reba"
     assert response.json()["score"] >= 1
-
