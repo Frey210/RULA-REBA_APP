@@ -1,43 +1,7 @@
-import os
-from collections.abc import Generator
-
-os.environ["DATABASE_URL"] = "sqlite://"
-
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
-
-from app.db.base import Base
-from app.db.session import get_db
-from app.main import app
-
-engine = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def override_get_db() -> Generator[Session, None, None]:
-    db = TestingSessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-app.dependency_overrides[get_db] = override_get_db
-client = TestClient(app)
-
-
-def setup_function() -> None:
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-
-
-def register_and_login(email: str = "operator@example.com") -> str:
+def register_and_login(client: TestClient, email: str = "operator@example.com") -> str:
     response = client.post(
         "/api/v1/auth/register",
         json={"email": email, "password": "strong-password", "full_name": "Operator"},
@@ -56,14 +20,14 @@ def auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_health_and_version() -> None:
+def test_health_and_version(client: TestClient) -> None:
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/api/v1/version").json()["api_version"] == "1.0"
 
 
-def test_auth_and_worker_scope() -> None:
-    token_a = register_and_login("a@example.com")
-    token_b = register_and_login("b@example.com")
+def test_auth_and_worker_scope(client: TestClient) -> None:
+    token_a = register_and_login(client, "a@example.com")
+    token_b = register_and_login(client, "b@example.com")
 
     response = client.post(
         "/api/v1/workers",
@@ -76,8 +40,8 @@ def test_auth_and_worker_scope() -> None:
     assert client.get("/api/v1/workers", headers=auth_header(token_b)).json() == []
 
 
-def test_pairing_and_session_lifecycle() -> None:
-    token = register_and_login()
+def test_pairing_and_session_lifecycle(client: TestClient) -> None:
+    token = register_and_login(client)
 
     pairing_response = client.post("/api/v1/device-pairings", headers=auth_header(token))
     assert pairing_response.status_code == 201
@@ -113,7 +77,7 @@ def test_pairing_and_session_lifecycle() -> None:
     assert stop_response.json()["status"] == "review_pending"
 
 
-def test_scoring_preview_requires_auth_and_returns_score() -> None:
+def test_scoring_preview_requires_auth_and_returns_score(client: TestClient) -> None:
     unauthenticated = client.post(
         "/api/v1/scoring/preview",
         json={
@@ -124,7 +88,7 @@ def test_scoring_preview_requires_auth_and_returns_score() -> None:
     )
     assert unauthenticated.status_code == 401
 
-    token = register_and_login("score@example.com")
+    token = register_and_login(client, "score@example.com")
     response = client.post(
         "/api/v1/scoring/preview",
         headers=auth_header(token),
@@ -148,3 +112,4 @@ def test_scoring_preview_requires_auth_and_returns_score() -> None:
     assert response.status_code == 200
     assert response.json()["assessment_type"] == "reba"
     assert response.json()["score"] >= 1
+
