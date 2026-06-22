@@ -4,6 +4,11 @@ declare global {
   interface Window {
     ergoquipt?: {
       discoverDevices: () => Promise<DiscoveredDevice[]>
+      pairDevice: (payload: {
+        baseUrl: string
+        pairingCode: string
+        backendUrl: string
+      }) => Promise<{ status: string; cam_id: string }>
     }
   }
 }
@@ -14,5 +19,6 @@ export type DiscoveredDevice = {
   address: string
   port: number
   status: string
+  paired: boolean
+  baseUrl: string
 }
-

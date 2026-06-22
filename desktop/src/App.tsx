@@ -46,6 +46,7 @@ import type { AuthTokens, CameraNode, PairingToken, SessionRecord } from './api'
 import type { DiscoveredDevice } from './types'
 
 const drawerWidth = 248
+const backendUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
 
 const navItems = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -399,6 +400,7 @@ function SettingsPage({
   const [pairing, setPairing] = useState<PairingToken | null>(null)
   const [devices, setDevices] = useState<DiscoveredDevice[]>([])
   const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
 
   async function createPairing() {
     setLoading(true)
@@ -424,6 +426,23 @@ function SettingsPage({
     }
   }
 
+  async function pairDevice(device: DiscoveredDevice) {
+    if (!pairing) return
+    setLoading(true)
+    setMessage(null)
+    try {
+      const result = await window.ergoquipt?.pairDevice({
+        baseUrl: device.baseUrl,
+        pairingCode: pairing.pairing_code,
+        backendUrl,
+      })
+      setMessage(`Paired ${result?.cam_id ?? device.cam_id}`)
+      await refreshData()
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <Stack spacing={3}>
       <PageTitle title="Settings" action={<Button onClick={refreshData}>Refresh</Button>} />
@@ -442,6 +461,11 @@ function SettingsPage({
             Pairing code: <strong>{pairing.pairing_code}</strong>
           </Alert>
         ) : null}
+        {message ? (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            {message}
+          </Alert>
+        ) : null}
       </Paper>
       <DeviceTable cameraNodes={cameraNodes} />
       <Paper className="panel" elevation={0}>
@@ -453,6 +477,10 @@ function SettingsPage({
               <Typography>{device.hostname}</Typography>
               <Chip size="small" label={device.address} />
               <Chip size="small" label={device.status} />
+              <Chip size="small" label={device.paired ? 'paired' : 'unpaired'} />
+              <Button size="small" disabled={!pairing || loading} onClick={() => pairDevice(device)}>
+                Pair
+              </Button>
             </Stack>
           ))
         ) : (

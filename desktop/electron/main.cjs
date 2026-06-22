@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require('electron')
+const os = require('node:os')
 const path = require('node:path')
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
@@ -25,9 +26,84 @@ function createWindow() {
 }
 
 ipcMain.handle('devices:discover', async () => {
-  // Placeholder for mDNS/subnet discovery. The renderer already consumes this API shape.
-  return []
+  const targets = getLocalSubnetTargets(8765)
+  const results = await Promise.allSettled(targets.map((target) => probeDevice(target)))
+  return results
+    .filter((result) => result.status === 'fulfilled' && result.value)
+    .map((result) => result.value)
 })
+
+ipcMain.handle('devices:pair', async (_event, payload) => {
+  const response = await fetch(`${payload.baseUrl}/pairing/complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      pairing_code: payload.pairingCode,
+      backend_url: payload.backendUrl,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Pairing failed: ${response.status}`)
+  }
+  return response.json()
+})
+
+function getLocalSubnetTargets(port) {
+  const interfaces = os.networkInterfaces()
+  const addresses = []
+
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal) {
+        continue
+      }
+      const parts = entry.address.split('.')
+      if (parts.length !== 4) {
+        continue
+      }
+      const prefix = `${parts[0]}.${parts[1]}.${parts[2]}`
+      for (let host = 1; host <= 254; host += 1) {
+        const ip = `${prefix}.${host}`
+        if (ip !== entry.address) {
+          addresses.push({ ip, port, baseUrl: `http://${ip}:${port}` })
+        }
+      }
+    }
+  }
+
+  return addresses
+}
+
+async function probeDevice(target) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 450)
+  try {
+    const response = await fetch(`${target.baseUrl}/pairing/info`, {
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      return null
+    }
+    const info = await response.json()
+    if (info.service !== 'ergoquipt-edge') {
+      return null
+    }
+    return {
+      cam_id: info.cam_id,
+      hostname: info.hostname,
+      address: target.ip,
+      port: target.port,
+      status: info.status,
+      paired: info.paired,
+      baseUrl: target.baseUrl,
+    }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
+}
 
 app.whenReady().then(() => {
   createWindow()
@@ -44,4 +120,3 @@ app.on('window-all-closed', () => {
     app.quit()
   }
 })
-
