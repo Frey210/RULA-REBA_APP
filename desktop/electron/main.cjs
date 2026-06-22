@@ -34,12 +34,13 @@ ipcMain.handle('devices:discover', async () => {
 })
 
 ipcMain.handle('devices:pair', async (_event, payload) => {
+  const backendUrl = normalizeBackendUrlForDevice(payload.backendUrl, payload.baseUrl)
   const response = await fetch(`${payload.baseUrl}/pairing/complete`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       pairing_code: payload.pairingCode,
-      backend_url: payload.backendUrl,
+      backend_url: backendUrl,
     }),
   })
 
@@ -47,6 +48,10 @@ ipcMain.handle('devices:pair', async (_event, payload) => {
     throw new Error(`Pairing failed: ${response.status}`)
   }
   return response.json()
+})
+
+ipcMain.handle('network:backend-url-for-device', async (_event, payload) => {
+  return normalizeBackendUrlForDevice(payload.backendUrl, payload.baseUrl)
 })
 
 function getLocalSubnetTargets(port) {
@@ -103,6 +108,46 @@ async function probeDevice(target) {
   } finally {
     clearTimeout(timeout)
   }
+}
+
+function normalizeBackendUrlForDevice(backendUrl, deviceBaseUrl) {
+  try {
+    const backend = new URL(backendUrl)
+    if (!['127.0.0.1', 'localhost'].includes(backend.hostname)) {
+      return backend.toString().replace(/\/$/, '')
+    }
+
+    const device = new URL(deviceBaseUrl)
+    const localIp = findLocalIpForPeer(device.hostname)
+    if (!localIp) {
+      return backend.toString().replace(/\/$/, '')
+    }
+    backend.hostname = localIp
+    return backend.toString().replace(/\/$/, '')
+  } catch {
+    return backendUrl
+  }
+}
+
+function findLocalIpForPeer(peerIp) {
+  const peerParts = peerIp.split('.')
+  if (peerParts.length !== 4) {
+    return null
+  }
+  const peerPrefix = `${peerParts[0]}.${peerParts[1]}.${peerParts[2]}`
+  const interfaces = os.networkInterfaces()
+
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal) {
+        continue
+      }
+      if (entry.address.startsWith(`${peerPrefix}.`)) {
+        return entry.address
+      }
+    }
+  }
+  return null
 }
 
 app.whenReady().then(() => {

@@ -54,7 +54,7 @@ const navItems = [
   { key: 'review', label: 'Session Review', icon: ClipboardCheck },
   { key: 'history', label: 'History', icon: History },
   { key: 'reports', label: 'Reports', icon: FileText },
-  { key: 'settings', label: 'Settings', icon: Settings },
+  { key: 'settings', label: 'Devices', icon: Settings },
 ]
 
 const theme = createTheme({
@@ -198,6 +198,7 @@ function App() {
           {error ? <Alert severity="error">{error}</Alert> : null}
           <Page
             activePage={activePage}
+            setActivePage={setActivePage}
             token={tokens.access_token}
             cameraNodes={cameraNodes}
             sessions={sessions}
@@ -284,12 +285,14 @@ function LoginScreen({
 
 function Page({
   activePage,
+  setActivePage,
   token,
   cameraNodes,
   sessions,
   refreshData,
 }: {
   activePage: string
+  setActivePage: (page: string) => void
   token: string
   cameraNodes: CameraNode[]
   sessions: SessionRecord[]
@@ -310,24 +313,43 @@ function Page({
   if (activePage === 'review') {
     return <Placeholder title="Session Review" icon={ClipboardCheck} />
   }
-  return <Dashboard cameraNodes={cameraNodes} sessions={sessions} refreshData={refreshData} />
+  return (
+    <Dashboard
+      cameraNodes={cameraNodes}
+      sessions={sessions}
+      refreshData={refreshData}
+      openDevices={() => setActivePage('settings')}
+    />
+  )
 }
 
 function Dashboard({
   cameraNodes,
   sessions,
   refreshData,
+  openDevices,
 }: {
   cameraNodes: CameraNode[]
   sessions: SessionRecord[]
   refreshData: () => Promise<void>
+  openDevices: () => void
 }) {
   const running = sessions.filter((session) => session.status === 'running').length
   const paired = cameraNodes.length
 
   return (
     <Stack spacing={3}>
-      <PageTitle title="Dashboard" action={<Button onClick={refreshData}>Refresh</Button>} />
+      <PageTitle
+        title="Dashboard"
+        action={
+          <Stack direction="row" spacing={1}>
+            <Button variant="contained" startIcon={<Camera size={18} />} onClick={openDevices}>
+              Add Edge Camera
+            </Button>
+            <Button onClick={refreshData}>Refresh</Button>
+          </Stack>
+        }
+      />
       <Box className="metricGrid">
         <Metric label="Paired Cameras" value={paired} icon={Camera} />
         <Metric label="Running Sessions" value={running} icon={Activity} />
@@ -401,6 +423,9 @@ function SettingsPage({
   const [devices, setDevices] = useState<DiscoveredDevice[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [manualIp, setManualIp] = useState('192.168.137.199')
+  const [backendReachableUrl, setBackendReachableUrl] = useState(backendUrl)
+  const isElectron = Boolean(window.ergoquipt)
 
   async function createPairing() {
     setLoading(true)
@@ -418,9 +443,54 @@ function SettingsPage({
 
   async function discoverDevices() {
     setLoading(true)
+    setMessage(null)
     try {
-      const discovered = await window.ergoquipt?.discoverDevices()
-      setDevices(discovered ?? [])
+      if (window.ergoquipt?.discoverDevices) {
+        const discovered = await window.ergoquipt.discoverDevices()
+        setDevices(discovered)
+        setMessage(discovered.length ? `Found ${discovered.length} edge device(s).` : 'No devices found on LAN scan.')
+      } else {
+        await probeManualIp()
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function probeManualIp() {
+    setLoading(true)
+    setMessage(null)
+    const baseUrl = manualIp.startsWith('http') ? manualIp : `http://${manualIp}:8765`
+    try {
+      const response = await fetch(`${baseUrl}/pairing/info`)
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+      const info = await response.json()
+      if (info.service !== 'ergoquipt-edge') {
+        throw new Error('Not an ErgoQuipt edge device')
+      }
+      const device = {
+        cam_id: info.cam_id,
+        hostname: info.hostname,
+        address: new URL(baseUrl).hostname,
+        port: Number(new URL(baseUrl).port || 8765),
+        status: info.status,
+        paired: info.paired,
+        baseUrl,
+      }
+      setDevices([device])
+      setMessage(`Found ${info.hostname} at ${baseUrl}.`)
+      if (window.ergoquipt?.backendUrlForDevice) {
+        const nextBackendUrl = await window.ergoquipt.backendUrlForDevice({
+          baseUrl,
+          backendUrl,
+        })
+        setBackendReachableUrl(nextBackendUrl)
+      }
+    } catch (err) {
+      setDevices([])
+      setMessage(err instanceof Error ? `Manual probe failed: ${err.message}` : 'Manual probe failed.')
     } finally {
       setLoading(false)
     }
@@ -434,7 +504,7 @@ function SettingsPage({
       const result = await window.ergoquipt?.pairDevice({
         baseUrl: device.baseUrl,
         pairingCode: pairing.pairing_code,
-        backendUrl,
+        backendUrl: backendReachableUrl,
       })
       setMessage(`Paired ${result?.cam_id ?? device.cam_id}`)
       await refreshData()
@@ -447,14 +517,40 @@ function SettingsPage({
     <Stack spacing={3}>
       <PageTitle title="Settings" action={<Button onClick={refreshData}>Refresh</Button>} />
       <Paper className="panel" elevation={0}>
-        <Stack direction="row" spacing={2}>
+        <Typography variant="h6">Add Edge Camera</Typography>
+        <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
+          Scan the local network, create a pairing code, then pair the selected Raspberry Pi.
+        </Typography>
+        {!isElectron ? (
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            Electron bridge is not available. Use the manual IP probe below, or launch with npm run electron.
+          </Alert>
+        ) : null}
+        <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
           <Button variant="contained" startIcon={<RadioReceiver size={18} />} onClick={discoverDevices}>
-            Scan devices
+            Scan LAN
           </Button>
           <Button variant="outlined" startIcon={<ShieldCheck size={18} />} onClick={createPairing}>
             Create pairing code
           </Button>
+          <TextField
+            size="small"
+            label="Manual edge IP"
+            value={manualIp}
+            onChange={(event) => setManualIp(event.target.value)}
+          />
+          <Button variant="outlined" onClick={probeManualIp}>
+            Probe IP
+          </Button>
         </Stack>
+        <TextField
+          sx={{ mt: 2, maxWidth: 520 }}
+          fullWidth
+          size="small"
+          label="Backend URL sent to Raspberry Pi"
+          value={backendReachableUrl}
+          onChange={(event) => setBackendReachableUrl(event.target.value)}
+        />
         {loading ? <LinearProgress sx={{ mt: 2 }} /> : null}
         {pairing ? (
           <Alert severity="success" sx={{ mt: 2 }}>
@@ -473,18 +569,19 @@ function SettingsPage({
         <Divider sx={{ my: 2 }} />
         {devices.length ? (
           devices.map((device) => (
-            <Stack key={`${device.address}:${device.port}`} direction="row" spacing={2} className="rowLine">
-              <Typography>{device.hostname}</Typography>
+            <Box key={`${device.address}:${device.port}`} className="rowLine rowFlex">
+              <Typography sx={{ minWidth: 160 }}>{device.hostname}</Typography>
+              <Chip size="small" label={device.cam_id} />
               <Chip size="small" label={device.address} />
               <Chip size="small" label={device.status} />
-              <Chip size="small" label={device.paired ? 'paired' : 'unpaired'} />
-              <Button size="small" disabled={!pairing || loading} onClick={() => pairDevice(device)}>
+              <Chip size="small" label={device.paired ? 'paired' : 'unpaired'} color={device.paired ? 'success' : 'default'} />
+              <Button size="small" variant="contained" disabled={!pairing || loading} onClick={() => pairDevice(device)}>
                 Pair
               </Button>
-            </Stack>
+            </Box>
           ))
         ) : (
-          <Typography color="text.secondary">No local edge devices discovered.</Typography>
+          <Typography color="text.secondary">No edge devices listed yet. Use Scan LAN or Probe IP.</Typography>
         )}
       </Paper>
     </Stack>

@@ -9,6 +9,10 @@ declare global {
         pairingCode: string
         backendUrl: string
       }) => Promise<{ status: string; cam_id: string }>
+      backendUrlForDevice: (payload: {
+        baseUrl: string
+        backendUrl: string
+      }) => Promise<string>
     }
   }
 }
