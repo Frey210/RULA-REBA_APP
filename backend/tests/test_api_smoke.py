@@ -111,3 +111,40 @@ def test_pairing_and_session_lifecycle() -> None:
     stop_response = client.post(f"/api/v1/sessions/{session_id}/stop", headers=auth_header(token))
     assert stop_response.status_code == 200
     assert stop_response.json()["status"] == "review_pending"
+
+
+def test_scoring_preview_requires_auth_and_returns_score() -> None:
+    unauthenticated = client.post(
+        "/api/v1/scoring/preview",
+        json={
+            "assessment_type": "reba",
+            "angles": {"neck": 5, "trunk": 3, "ua_l": 10, "ua_r": 12, "la_l": 85, "la_r": 90},
+            "manual": {"load_score": 0, "coupling_score": 0, "activity_score": 0},
+        },
+    )
+    assert unauthenticated.status_code == 401
+
+    token = register_and_login("score@example.com")
+    response = client.post(
+        "/api/v1/scoring/preview",
+        headers=auth_header(token),
+        json={
+            "assessment_type": "reba",
+            "angles": {
+                "neck": 5,
+                "trunk": 3,
+                "ua_l": 10,
+                "ua_r": 12,
+                "la_l": 85,
+                "la_r": 90,
+                "wrist_l": 4,
+                "wrist_r": 5,
+                "leg_l": 10,
+                "leg_r": 12,
+            },
+            "manual": {"load_score": 0, "coupling_score": 0, "activity_score": 0},
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["assessment_type"] == "reba"
+    assert response.json()["score"] >= 1
