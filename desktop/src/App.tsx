@@ -487,6 +487,8 @@ function SettingsPage({
           backendUrl,
         })
         setBackendReachableUrl(nextBackendUrl)
+      } else {
+        setBackendReachableUrl(inferBackendUrlFromEdge(baseUrl))
       }
     } catch (err) {
       setDevices([])
@@ -586,6 +588,19 @@ function SettingsPage({
       </Paper>
     </Stack>
   )
+}
+
+function inferBackendUrlFromEdge(edgeBaseUrl: string): string {
+  try {
+    const edge = new URL(edgeBaseUrl)
+    const parts = edge.hostname.split('.')
+    if (parts.length === 4) {
+      return `http://${parts[0]}.${parts[1]}.${parts[2]}.1:8000`
+    }
+  } catch {
+    return backendUrl
+  }
+  return backendUrl
 }
 
 function SessionList({ title, sessions }: { title: string; sessions: SessionRecord[] }) {
