@@ -41,6 +41,7 @@ ipcMain.handle('devices:pair', async (_event, payload) => {
     body: JSON.stringify({
       pairing_code: payload.pairingCode,
       backend_url: backendUrl,
+      edge_base_url: payload.baseUrl,
     }),
   })
 

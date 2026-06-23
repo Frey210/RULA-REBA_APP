@@ -303,7 +303,7 @@ function Page({
   refreshData: () => Promise<void>
 }) {
   if (activePage === 'live') {
-    return <LiveAssessment token={token} sessions={sessions} />
+    return <LiveAssessment token={token} sessions={sessions} cameraNodes={cameraNodes} refreshData={refreshData} />
   }
   if (activePage === 'settings') {
     return <SettingsPage token={token} cameraNodes={cameraNodes} refreshData={refreshData} />
@@ -366,52 +366,257 @@ function Dashboard({
   )
 }
 
-function LiveAssessment({ token, sessions }: { token: string; sessions: SessionRecord[] }) {
-  const [sessionId, setSessionId] = useState(sessions[0]?.session_code ?? '')
-  const [events, setEvents] = useState<string[]>([])
+type LiveDetectionEvent = {
+  event_type: string
+  session_id: string
+  cam_id: string
+  frame_id: number
+  timestamp: number
+  detections: Array<{
+    worker_id: string
+    tracking_id: number
+    confidence?: number
+    bbox: number[]
+    metadata?: Record<string, unknown>
+  }>
+}
+
+function LiveAssessment({
+  token,
+  sessions,
+  cameraNodes,
+  refreshData,
+}: {
+  token: string
+  sessions: SessionRecord[]
+  cameraNodes: CameraNode[]
+  refreshData: () => Promise<void>
+}) {
+  const [sessionCode, setSessionCode] = useState(sessions[0]?.session_code ?? '')
+  const [selectedCamIds, setSelectedCamIds] = useState<string[]>(() => cameraNodes.map((node) => node.cam_id).slice(0, 1))
+  const [notes, setNotes] = useState('')
+  const [events, setEvents] = useState<LiveDetectionEvent[]>([])
   const [connected, setConnected] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const activeSession = sessions.find((session) => session.session_code === sessionCode)
+  const latestEvent = events[0]
+  const latestDetection = latestEvent?.detections[0]
+  const selectedSessionEdgeResults = activeSession?.metadata_json.edge_start_results ?? []
 
   useEffect(() => {
-    if (!sessionId) return
-    const ws = new WebSocket(liveWebSocketUrl(sessionId, token))
+    if (!sessionCode && sessions[0]) {
+      setSessionCode(sessions[0].session_code)
+    }
+  }, [sessionCode, sessions])
+
+  useEffect(() => {
+    if (!sessionCode) return
+    const ws = new WebSocket(liveWebSocketUrl(sessionCode, token))
     ws.onopen = () => setConnected(true)
     ws.onclose = () => setConnected(false)
     ws.onmessage = (event) => {
-      setEvents((current) => [event.data, ...current].slice(0, 20))
+      const parsed = JSON.parse(event.data) as LiveDetectionEvent
+      setEvents((current) => [parsed, ...current].slice(0, 50))
     }
     return () => ws.close()
-  }, [sessionId, token])
+  }, [sessionCode, token])
+
+  async function createAndStartSession() {
+    if (!selectedCamIds.length) {
+      setMessage('Select at least one paired camera node.')
+      return
+    }
+    setLoading(true)
+    setMessage(null)
+    try {
+      const session = await apiRequest<SessionRecord>(
+        '/api/v1/sessions',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            camera_node_ids: selectedCamIds,
+            notes: notes.trim() || null,
+          }),
+        },
+        token,
+      )
+      const started = await apiRequest<SessionRecord>(
+        `/api/v1/sessions/${session.id}/start`,
+        { method: 'POST' },
+        token,
+      )
+      setSessionCode(started.session_code)
+      setEvents([])
+      setMessage('Session started. Waiting for edge detection events.')
+      await refreshData()
+    } catch (err) {
+      setMessage(err instanceof Error ? `Start session failed: ${err.message}` : 'Start session failed.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function startSelectedSession() {
+    if (!activeSession) return
+    setLoading(true)
+    setMessage(null)
+    try {
+      const started = await apiRequest<SessionRecord>(
+        `/api/v1/sessions/${activeSession.id}/start`,
+        { method: 'POST' },
+        token,
+      )
+      setSessionCode(started.session_code)
+      setEvents([])
+      setMessage('Session started. Waiting for edge detection events.')
+      await refreshData()
+    } catch (err) {
+      setMessage(err instanceof Error ? `Start session failed: ${err.message}` : 'Start session failed.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function stopSelectedSession() {
+    if (!activeSession) return
+    setLoading(true)
+    setMessage(null)
+    try {
+      await apiRequest<SessionRecord>(
+        `/api/v1/sessions/${activeSession.id}/stop`,
+        { method: 'POST' },
+        token,
+      )
+      setMessage('Session stopped.')
+      await refreshData()
+    } catch (err) {
+      setMessage(err instanceof Error ? `Stop session failed: ${err.message}` : 'Stop session failed.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function toggleCamera(camId: string) {
+    setSelectedCamIds((current) =>
+      current.includes(camId) ? current.filter((id) => id !== camId) : [...current, camId],
+    )
+  }
 
   return (
     <Stack spacing={3}>
       <PageTitle title="Live Assessment" action={<StatusChip status={connected ? 'online' : 'offline'} />} />
       <Paper className="panel" elevation={0}>
-        <Stack direction="row" spacing={2}>
+        <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
           <TextField
             select
             label="Session"
-            value={sessionId}
-            onChange={(event) => setSessionId(event.target.value)}
+            value={sessionCode}
+            onChange={(event) => {
+              setSessionCode(event.target.value)
+              setEvents([])
+            }}
             sx={{ minWidth: 320 }}
           >
             {sessions.map((session) => (
               <MenuItem key={session.id} value={session.session_code}>
-                {session.session_code}
+                {session.session_code} - {session.status}
               </MenuItem>
             ))}
           </TextField>
+          <Button variant="contained" disabled={loading || !activeSession || activeSession.status === 'running'} onClick={startSelectedSession}>
+            Start Selected
+          </Button>
+          <Button color="error" variant="outlined" disabled={loading || !activeSession || activeSession.status !== 'running'} onClick={stopSelectedSession}>
+            Stop
+          </Button>
         </Stack>
+        {selectedSessionEdgeResults.length ? (
+          <Box className="pairingSteps" sx={{ mt: 2 }}>
+            {selectedSessionEdgeResults.map((result) => (
+              <Chip
+                key={`${result.cam_id}-${result.status}`}
+                size="small"
+                color={result.status === 'started' ? 'success' : result.status === 'error' ? 'error' : 'default'}
+                label={`${result.cam_id}: ${result.status}`}
+              />
+            ))}
+          </Box>
+        ) : null}
         <Divider sx={{ my: 2 }} />
-        <Box className="eventFeed">
+        <Box className="metricGrid">
+          <Metric label="Live Events" value={events.length} icon={Activity} />
+          <Metric label="Latest Frame" value={latestEvent?.frame_id ?? 0} icon={Camera} />
+          <Metric label="Detections" value={latestEvent?.detections.length ?? 0} icon={ClipboardCheck} />
+          <Metric label="Workers" value={new Set(events.flatMap((event) => event.detections.map((detection) => detection.worker_id))).size} icon={BarChart3} />
+        </Box>
+      </Paper>
+
+      <Paper className="panel" elevation={0}>
+        <Typography variant="h6">Start New Session</Typography>
+        <Divider sx={{ my: 2 }} />
+        <Stack spacing={2}>
+          <Box className="pairingSteps">
+            {cameraNodes.map((node) => {
+              const label = node.metadata_json.display_name ?? node.cam_id
+              const selected = selectedCamIds.includes(node.cam_id)
+              return (
+                <Chip
+                  key={node.id}
+                  clickable
+                  color={selected ? 'primary' : 'default'}
+                  label={`${label} (${node.status})`}
+                  onClick={() => toggleCamera(node.cam_id)}
+                />
+              )
+            })}
+          </Box>
+          <TextField label="Session notes" value={notes} onChange={(event) => setNotes(event.target.value)} />
+          <Button variant="contained" disabled={loading || !cameraNodes.length} onClick={createAndStartSession}>
+            Create and Start Session
+          </Button>
+        </Stack>
+        {loading ? <LinearProgress sx={{ mt: 2 }} /> : null}
+        {message ? (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            {message}
+          </Alert>
+        ) : null}
+      </Paper>
+
+      <Paper className="panel" elevation={0}>
+        <Typography variant="h6">Live Stream</Typography>
+        <Divider sx={{ my: 2 }} />
+        <Box className="liveGrid">
+          <Box className="livePreview">
+            {latestDetection ? (
+              <>
+                <Typography variant="h6">Tracking #{latestDetection.tracking_id}</Typography>
+                <Typography>Worker: {latestDetection.worker_id}</Typography>
+                <Typography>Confidence: {formatPercent(latestDetection.confidence)}</Typography>
+                <Typography>BBox: {latestDetection.bbox.map((value) => Math.round(value)).join(', ')}</Typography>
+              </>
+            ) : (
+              <Typography color="text.secondary">Waiting for Raspberry Pi detection events.</Typography>
+            )}
+          </Box>
+          <Box className="eventFeed">
           {events.length ? (
-            events.map((event, index) => <pre key={`${index}-${event.slice(0, 12)}`}>{event}</pre>)
+            events.map((event, index) => <pre key={`${event.frame_id}-${index}`}>{JSON.stringify(event, null, 2)}</pre>)
           ) : (
             <Typography color="text.secondary">Waiting for edge stream.</Typography>
           )}
+          </Box>
         </Box>
       </Paper>
     </Stack>
   )
+}
+
+function formatPercent(value?: number): string {
+  if (value === undefined || value === null) return '-'
+  return `${Math.round(value * 100)}%`
 }
 
 function SettingsPage({
@@ -520,6 +725,7 @@ function SettingsPage({
           })
         : await pairDeviceFromRenderer(device.baseUrl, pairing.pairing_code, backendReachableUrl)
       setMessage(`Paired ${result?.cam_id ?? device.cam_id}`)
+      await attachEdgeBaseUrl(result?.cam_id ?? device.cam_id, device.baseUrl)
       setPairing(null)
       await probeDevice(device.baseUrl)
       await refreshData()
@@ -528,6 +734,20 @@ function SettingsPage({
     } finally {
       setLoading(false)
     }
+  }
+
+  async function attachEdgeBaseUrl(camId: string, edgeBaseUrl: string) {
+    const cameraNodes = await apiRequest<CameraNode[]>('/api/v1/camera-nodes', {}, token)
+    const camera = cameraNodes.find((node) => node.cam_id === camId)
+    if (!camera) return
+    await apiRequest<CameraNode>(
+      `/api/v1/camera-nodes/${camera.id}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ edge_base_url: edgeBaseUrl }),
+      },
+      token,
+    )
   }
 
   async function probeDevice(baseUrl: string) {
@@ -633,6 +853,7 @@ async function pairDeviceFromRenderer(baseUrl: string, pairingCode: string, back
     body: JSON.stringify({
       pairing_code: pairingCode,
       backend_url: backendReachableUrl,
+      edge_base_url: baseUrl,
     }),
   })
 

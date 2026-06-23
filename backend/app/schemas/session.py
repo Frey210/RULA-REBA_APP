@@ -16,6 +16,6 @@ class SessionRead(BaseModel):
     stopped_at: datetime | None
     completed_at: datetime | None
     notes: str | None
+    metadata_json: dict
 
     model_config = {"from_attributes": True}
-

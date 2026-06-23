@@ -44,7 +44,10 @@ def update_camera_node(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Camera node not found")
 
     metadata = dict(camera.metadata_json or {})
-    metadata["display_name"] = payload.display_name.strip()
+    if payload.display_name is not None:
+        metadata["display_name"] = payload.display_name.strip()
+    if payload.edge_base_url is not None:
+        metadata["edge_base_url"] = payload.edge_base_url.rstrip("/")
     camera.metadata_json = metadata
     db.add(camera)
     db.commit()

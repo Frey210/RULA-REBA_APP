@@ -32,6 +32,18 @@ export type SessionRecord = {
   started_at: string | null
   stopped_at: string | null
   notes: string | null
+  metadata_json: {
+    camera_node_ids?: string[]
+    edge_start_results?: EdgeCommandResult[]
+    edge_stop_results?: EdgeCommandResult[]
+    [key: string]: unknown
+  }
+}
+
+export type EdgeCommandResult = {
+  cam_id: string
+  status: string
+  detail: string
 }
 
 export async function apiRequest<T>(

@@ -11,7 +11,8 @@ class CameraNodeCreate(BaseModel):
 
 
 class CameraNodeUpdate(BaseModel):
-    display_name: str = Field(min_length=1, max_length=100)
+    display_name: str | None = Field(default=None, min_length=1, max_length=100)
+    edge_base_url: str | None = Field(default=None, max_length=500)
 
 
 class CameraNodeRead(BaseModel):
