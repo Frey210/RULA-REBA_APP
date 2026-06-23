@@ -40,3 +40,15 @@ For local SQLite migration smoke tests:
 $env:DATABASE_URL='sqlite:///./migration_smoke.sqlite3'
 .\.venv\Scripts\python.exe -m alembic upgrade head
 ```
+
+## Electron Development
+
+The Electron command starts FastAPI, Vite, and Electron together:
+
+```powershell
+cd D:\Aerasea\RULA-REBA_APP\desktop
+npm.cmd run electron
+```
+
+It uses `backend\.venv` and the local SQLite database `backend\dev_server.sqlite3`.
+Set `ERGOQUIPT_DATABASE_URL` before launching only when a different database is required.
