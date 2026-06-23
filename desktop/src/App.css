@@ -83,10 +83,22 @@
 
 .livePreview {
   min-height: 240px;
+  aspect-ratio: 16 / 9;
   padding: 18px;
   border: 1px solid #dde2e4;
   border-radius: 8px;
   background: #f9fafb;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.cameraStream {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #12181b;
+  border-radius: 6px;
 }
 
 .metric,

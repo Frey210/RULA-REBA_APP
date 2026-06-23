@@ -8,6 +8,7 @@ import {
   CssBaseline,
   Divider,
   Drawer,
+  FormControlLabel,
   LinearProgress,
   List,
   ListItemButton,
@@ -16,6 +17,7 @@ import {
   MenuItem,
   Paper,
   Stack,
+  Switch,
   TextField,
   ThemeProvider,
   Toolbar,
@@ -399,11 +401,16 @@ function LiveAssessment({
   const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [showStream, setShowStream] = useState(true)
+  const [showOverlay, setShowOverlay] = useState(true)
+  const [streamFps, setStreamFps] = useState(8)
 
   const activeSession = sessions.find((session) => session.session_code === sessionCode)
   const latestEvent = events[0]
   const latestDetection = latestEvent?.detections[0]
   const selectedSessionEdgeResults = activeSession?.metadata_json.edge_start_results ?? []
+  const streamCamera = findStreamCamera(activeSession, cameraNodes, selectedCamIds)
+  const streamUrl = showStream && streamCamera ? buildStreamUrl(streamCamera, streamFps, showOverlay) : null
 
   useEffect(() => {
     if (!sessionCode && sessions[0]) {
@@ -586,17 +593,43 @@ function LiveAssessment({
       </Paper>
 
       <Paper className="panel" elevation={0}>
-        <Typography variant="h6">Live Stream</Typography>
+        <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 1 }}>
+          <Typography variant="h6">Live Stream</Typography>
+          <FormControlLabel
+            control={<Switch checked={showStream} onChange={(event) => setShowStream(event.target.checked)} />}
+            label="Camera"
+          />
+          <FormControlLabel
+            control={<Switch checked={showOverlay} onChange={(event) => setShowOverlay(event.target.checked)} />}
+            label="Overlay"
+          />
+          <TextField
+            select
+            size="small"
+            label="FPS"
+            value={streamFps}
+            onChange={(event) => setStreamFps(Number(event.target.value))}
+            sx={{ width: 110 }}
+          >
+            <MenuItem value={4}>4</MenuItem>
+            <MenuItem value={8}>8</MenuItem>
+            <MenuItem value={12}>12</MenuItem>
+          </TextField>
+        </Stack>
         <Divider sx={{ my: 2 }} />
         <Box className="liveGrid">
           <Box className="livePreview">
-            {latestDetection ? (
+            {streamUrl ? (
+              <img className="cameraStream" src={streamUrl} alt={`${streamCamera?.cam_id ?? 'Camera'} live stream`} />
+            ) : latestDetection ? (
               <>
                 <Typography variant="h6">Tracking #{latestDetection.tracking_id}</Typography>
                 <Typography>Worker: {latestDetection.worker_id}</Typography>
                 <Typography>Confidence: {formatPercent(latestDetection.confidence)}</Typography>
                 <Typography>BBox: {latestDetection.bbox.map((value) => Math.round(value)).join(', ')}</Typography>
               </>
+            ) : !streamCamera ? (
+              <Typography color="text.secondary">Pair a camera node with an edge stream URL to show live video.</Typography>
             ) : (
               <Typography color="text.secondary">Waiting for Raspberry Pi detection events.</Typography>
             )}
@@ -617,6 +650,30 @@ function LiveAssessment({
 function formatPercent(value?: number): string {
   if (value === undefined || value === null) return '-'
   return `${Math.round(value * 100)}%`
+}
+
+function findStreamCamera(
+  activeSession: SessionRecord | undefined,
+  cameraNodes: CameraNode[],
+  selectedCamIds: string[],
+): CameraNode | undefined {
+  const sessionCamIds = activeSession?.metadata_json.camera_node_ids ?? []
+  const preferredIds = sessionCamIds.length ? sessionCamIds : selectedCamIds
+  return preferredIds
+    .map((camId) => cameraNodes.find((node) => node.cam_id === camId))
+    .find((node): node is CameraNode => Boolean(node?.metadata_json.edge_base_url))
+}
+
+function buildStreamUrl(camera: CameraNode, fps: number, overlay: boolean): string | null {
+  const edgeBaseUrl = camera.metadata_json.edge_base_url
+  if (typeof edgeBaseUrl !== 'string') return null
+  const url = new URL('/stream/mjpeg', edgeBaseUrl)
+  url.searchParams.set('width', '640')
+  url.searchParams.set('height', '360')
+  url.searchParams.set('fps', String(fps))
+  url.searchParams.set('quality', '65')
+  url.searchParams.set('overlay', overlay ? 'true' : 'false')
+  return url.toString()
 }
 
 function SettingsPage({

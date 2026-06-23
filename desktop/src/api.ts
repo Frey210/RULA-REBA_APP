@@ -15,6 +15,7 @@ export type CameraNode = {
   paired_at: string | null
   metadata_json: {
     display_name?: string
+    edge_base_url?: string
     [key: string]: unknown
   }
 }
