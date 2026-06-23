@@ -378,7 +378,12 @@ type LiveDetectionEvent = {
     worker_id: string
     tracking_id: number
     confidence?: number
+    reid_confidence?: number
     bbox: number[]
+    keypoints?: {
+      format: string
+      points: Array<{ id: number; name?: string; x: number; y: number; score?: number }>
+    }
     metadata?: Record<string, unknown>
   }>
 }
@@ -634,22 +639,128 @@ function LiveAssessment({
               <Typography color="text.secondary">Waiting for Raspberry Pi detection events.</Typography>
             )}
           </Box>
-          <Box className="eventFeed">
-          {events.length ? (
-            events.map((event, index) => <pre key={`${event.frame_id}-${index}`}>{JSON.stringify(event, null, 2)}</pre>)
-          ) : (
-            <Typography color="text.secondary">Waiting for edge stream.</Typography>
-          )}
-          </Box>
+          <DetectionInsights latestEvent={latestEvent} events={events} />
         </Box>
       </Paper>
     </Stack>
   )
 }
 
+function DetectionInsights({
+  latestEvent,
+  events,
+}: {
+  latestEvent: LiveDetectionEvent | undefined
+  events: LiveDetectionEvent[]
+}) {
+  const latestDetection = latestEvent?.detections[0]
+  const rula = readRiskScore(latestDetection?.metadata?.rula)
+  const reba = readRiskScore(latestDetection?.metadata?.reba)
+  const keypointCount = latestDetection?.keypoints?.points.length ?? 0
+  const bbox = latestDetection?.bbox.map((value) => Math.round(value)) ?? []
+
+  if (!latestEvent || !latestDetection) {
+    return (
+      <Box className="insightPanel emptyInsight">
+        <Typography variant="h6">Detection Insights</Typography>
+        <Typography color="text.secondary">No detection event received yet.</Typography>
+      </Box>
+    )
+  }
+
+  return (
+    <Box className="insightPanel">
+      <Box className="insightHeader">
+        <Box>
+          <Typography variant="h6">Detection Insights</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {latestEvent.cam_id} · frame {latestEvent.frame_id}
+          </Typography>
+        </Box>
+        <Chip size="small" color="success" label="Live" />
+      </Box>
+
+      <Box className="scoreGrid">
+        <Box className="scoreTile">
+          <Typography variant="caption" color="text.secondary">RULA</Typography>
+          <Typography variant="h5">{rula.score}</Typography>
+          <Chip size="small" label={rula.risk} color={riskColor(rula.risk)} />
+        </Box>
+        <Box className="scoreTile">
+          <Typography variant="caption" color="text.secondary">REBA</Typography>
+          <Typography variant="h5">{reba.score}</Typography>
+          <Chip size="small" label={reba.risk} color={riskColor(reba.risk)} />
+        </Box>
+      </Box>
+
+      <Box className="workerCard">
+        <Box>
+          <Typography variant="caption" color="text.secondary">Worker</Typography>
+          <Typography sx={{ fontWeight: 700 }}>{latestDetection.worker_id}</Typography>
+        </Box>
+        <Chip size="small" label={`Track #${latestDetection.tracking_id}`} />
+      </Box>
+
+      <Box className="detailGrid">
+        <InsightValue label="Confidence" value={formatPercent(latestDetection.confidence)} />
+        <InsightValue label="Re-ID" value={formatPercent(latestDetection.reid_confidence)} />
+        <InsightValue label="Keypoints" value={String(keypointCount)} />
+        <InsightValue label="BBox" value={bbox.length ? bbox.join(', ') : '-'} />
+      </Box>
+
+      <Divider />
+      <Typography variant="subtitle2">Recent Events</Typography>
+      <Box className="eventList">
+        {events.slice(0, 8).map((event) => (
+          <Box className="eventItem" key={`${event.frame_id}-${event.timestamp}`}>
+            <Box>
+              <Typography sx={{ fontWeight: 700 }}>Frame {event.frame_id}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                {event.detections.length} detection(s) · {formatTimestamp(event.timestamp)}
+              </Typography>
+            </Box>
+            <Chip size="small" label={event.cam_id} />
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  )
+}
+
+function InsightValue({ label, value }: { label: string; value: string }) {
+  return (
+    <Box className="insightValue">
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
+      <Typography sx={{ fontWeight: 700 }}>{value}</Typography>
+    </Box>
+  )
+}
+
+function readRiskScore(value: unknown): { score: string; risk: string } {
+  if (typeof value !== 'object' || value === null) {
+    return { score: '-', risk: 'unknown' }
+  }
+  const record = value as Record<string, unknown>
+  return {
+    score: typeof record.score === 'number' || typeof record.score === 'string' ? String(record.score) : '-',
+    risk: typeof record.risk === 'string' ? record.risk : 'unknown',
+  }
+}
+
+function riskColor(risk: string): 'success' | 'warning' | 'error' | 'default' {
+  if (['low', 'negligible'].includes(risk.toLowerCase())) return 'success'
+  if (['medium', 'moderate'].includes(risk.toLowerCase())) return 'warning'
+  if (['high', 'very high'].includes(risk.toLowerCase())) return 'error'
+  return 'default'
+}
+
 function formatPercent(value?: number): string {
   if (value === undefined || value === null) return '-'
   return `${Math.round(value * 100)}%`
+}
+
+function formatTimestamp(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 function findStreamCamera(
