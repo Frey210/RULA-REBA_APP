@@ -120,7 +120,7 @@
 }
 
 .insightHeader,
-.workerCard,
+.workerCardHeader,
 .eventItem {
   display: flex;
   align-items: center;
@@ -128,31 +128,34 @@
   gap: 12px;
 }
 
-.scoreGrid,
 .detailGrid {
   display: grid;
   gap: 10px;
 }
 
-.scoreGrid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.scoreTile,
 .insightValue {
   border: 1px solid #e4e7e8;
   border-radius: 8px;
   background: #f9fafb;
 }
 
-.scoreTile {
-  padding: 12px;
+.workerList {
+  display: grid;
+  gap: 12px;
 }
 
 .workerCard {
   padding: 12px;
   border: 1px solid #e4e7e8;
   border-radius: 8px;
+  display: grid;
+  gap: 10px;
+}
+
+.workerScoreRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .detailGrid {

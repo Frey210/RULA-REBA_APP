@@ -374,18 +374,20 @@ type LiveDetectionEvent = {
   cam_id: string
   frame_id: number
   timestamp: number
-  detections: Array<{
-    worker_id: string
-    tracking_id: number
-    confidence?: number
-    reid_confidence?: number
-    bbox: number[]
-    keypoints?: {
-      format: string
-      points: Array<{ id: number; name?: string; x: number; y: number; score?: number }>
-    }
-    metadata?: Record<string, unknown>
-  }>
+  detections: LiveDetection[]
+}
+
+type LiveDetection = {
+  worker_id: string
+  tracking_id: number
+  confidence?: number
+  reid_confidence?: number
+  bbox: number[]
+  keypoints?: {
+    format: string
+    points: Array<{ id: number; name?: string; x: number; y: number; score?: number }>
+  }
+  metadata?: Record<string, unknown>
 }
 
 function LiveAssessment({
@@ -412,10 +414,11 @@ function LiveAssessment({
 
   const activeSession = sessions.find((session) => session.session_code === sessionCode)
   const latestEvent = events[0]
-  const latestDetection = latestEvent?.detections[0]
   const selectedSessionEdgeResults = activeSession?.metadata_json.edge_start_results ?? []
   const streamCamera = findStreamCamera(activeSession, cameraNodes, selectedCamIds)
   const streamUrl = showStream && streamCamera ? buildStreamUrl(streamCamera, streamFps, showOverlay) : null
+  const activeWorkerCount = latestEvent?.detections.length ?? 0
+  const recentWorkerCount = new Set(events.flatMap((event) => event.detections.map((detection) => detection.worker_id))).size
 
   useEffect(() => {
     if (!sessionCode && sessions[0]) {
@@ -560,8 +563,8 @@ function LiveAssessment({
         <Box className="metricGrid">
           <Metric label="Live Events" value={events.length} icon={Activity} />
           <Metric label="Latest Frame" value={latestEvent?.frame_id ?? 0} icon={Camera} />
-          <Metric label="Detections" value={latestEvent?.detections.length ?? 0} icon={ClipboardCheck} />
-          <Metric label="Workers" value={new Set(events.flatMap((event) => event.detections.map((detection) => detection.worker_id))).size} icon={BarChart3} />
+          <Metric label="People in Frame" value={activeWorkerCount} icon={ClipboardCheck} />
+          <Metric label="Recent Workers" value={recentWorkerCount} icon={BarChart3} />
         </Box>
       </Paper>
 
@@ -626,12 +629,10 @@ function LiveAssessment({
           <Box className="livePreview">
             {streamUrl ? (
               <img className="cameraStream" src={streamUrl} alt={`${streamCamera?.cam_id ?? 'Camera'} live stream`} />
-            ) : latestDetection ? (
+            ) : latestEvent?.detections.length ? (
               <>
-                <Typography variant="h6">Tracking #{latestDetection.tracking_id}</Typography>
-                <Typography>Worker: {latestDetection.worker_id}</Typography>
-                <Typography>Confidence: {formatPercent(latestDetection.confidence)}</Typography>
-                <Typography>BBox: {latestDetection.bbox.map((value) => Math.round(value)).join(', ')}</Typography>
+                <Typography variant="h6">{latestEvent.detections.length} worker(s) detected</Typography>
+                <Typography>Latest frame: {latestEvent.frame_id}</Typography>
               </>
             ) : !streamCamera ? (
               <Typography color="text.secondary">Pair a camera node with an edge stream URL to show live video.</Typography>
@@ -653,13 +654,7 @@ function DetectionInsights({
   latestEvent: LiveDetectionEvent | undefined
   events: LiveDetectionEvent[]
 }) {
-  const latestDetection = latestEvent?.detections[0]
-  const rula = readRiskScore(latestDetection?.metadata?.rula)
-  const reba = readRiskScore(latestDetection?.metadata?.reba)
-  const keypointCount = latestDetection?.keypoints?.points.length ?? 0
-  const bbox = latestDetection?.bbox.map((value) => Math.round(value)) ?? []
-
-  if (!latestEvent || !latestDetection) {
+  if (!latestEvent || !latestEvent.detections.length) {
     return (
       <Box className="insightPanel emptyInsight">
         <Typography variant="h6">Detection Insights</Typography>
@@ -674,38 +669,16 @@ function DetectionInsights({
         <Box>
           <Typography variant="h6">Detection Insights</Typography>
           <Typography variant="body2" color="text.secondary">
-            {latestEvent.cam_id} · frame {latestEvent.frame_id}
+            {latestEvent.cam_id} - frame {latestEvent.frame_id} - {latestEvent.detections.length} worker(s)
           </Typography>
         </Box>
         <Chip size="small" color="success" label="Live" />
       </Box>
 
-      <Box className="scoreGrid">
-        <Box className="scoreTile">
-          <Typography variant="caption" color="text.secondary">RULA</Typography>
-          <Typography variant="h5">{rula.score}</Typography>
-          <Chip size="small" label={rula.risk} color={riskColor(rula.risk)} />
-        </Box>
-        <Box className="scoreTile">
-          <Typography variant="caption" color="text.secondary">REBA</Typography>
-          <Typography variant="h5">{reba.score}</Typography>
-          <Chip size="small" label={reba.risk} color={riskColor(reba.risk)} />
-        </Box>
-      </Box>
-
-      <Box className="workerCard">
-        <Box>
-          <Typography variant="caption" color="text.secondary">Worker</Typography>
-          <Typography sx={{ fontWeight: 700 }}>{latestDetection.worker_id}</Typography>
-        </Box>
-        <Chip size="small" label={`Track #${latestDetection.tracking_id}`} />
-      </Box>
-
-      <Box className="detailGrid">
-        <InsightValue label="Confidence" value={formatPercent(latestDetection.confidence)} />
-        <InsightValue label="Re-ID" value={formatPercent(latestDetection.reid_confidence)} />
-        <InsightValue label="Keypoints" value={String(keypointCount)} />
-        <InsightValue label="BBox" value={bbox.length ? bbox.join(', ') : '-'} />
+      <Box className="workerList">
+        {latestEvent.detections.map((detection) => (
+          <WorkerInsightCard key={`${detection.worker_id}-${detection.tracking_id}`} detection={detection} />
+        ))}
       </Box>
 
       <Divider />
@@ -716,12 +689,42 @@ function DetectionInsights({
             <Box>
               <Typography sx={{ fontWeight: 700 }}>Frame {event.frame_id}</Typography>
               <Typography variant="caption" color="text.secondary">
-                {event.detections.length} detection(s) · {formatTimestamp(event.timestamp)}
+                {event.detections.length} worker(s) - {formatTimestamp(event.timestamp)}
               </Typography>
             </Box>
             <Chip size="small" label={event.cam_id} />
           </Box>
         ))}
+      </Box>
+    </Box>
+  )
+}
+
+function WorkerInsightCard({ detection }: { detection: LiveDetection }) {
+  const rula = readRiskScore(detection.metadata?.rula)
+  const reba = readRiskScore(detection.metadata?.reba)
+  const keypointCount = detection.keypoints?.points.length ?? 0
+  const bbox = detection.bbox.map((value) => Math.round(value))
+  return (
+    <Box className="workerCard">
+      <Box className="workerCardHeader">
+        <Box>
+          <Typography variant="caption" color="text.secondary">Worker</Typography>
+          <Typography sx={{ fontWeight: 700 }}>{detection.worker_id}</Typography>
+        </Box>
+        <Chip size="small" label={`Track #${detection.tracking_id}`} />
+      </Box>
+
+      <Box className="workerScoreRow">
+        <Chip size="small" label={`RULA ${rula.score} ${rula.risk}`} color={riskColor(rula.risk)} />
+        <Chip size="small" label={`REBA ${reba.score} ${reba.risk}`} color={riskColor(reba.risk)} />
+      </Box>
+
+      <Box className="detailGrid">
+        <InsightValue label="Confidence" value={formatPercent(detection.confidence)} />
+        <InsightValue label="Re-ID" value={formatPercent(detection.reid_confidence)} />
+        <InsightValue label="Keypoints" value={String(keypointCount)} />
+        <InsightValue label="BBox" value={bbox.length ? bbox.join(', ') : '-'} />
       </Box>
     </Box>
   )
