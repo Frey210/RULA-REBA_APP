@@ -414,6 +414,9 @@ function LiveAssessment({
 
   const activeSession = sessions.find((session) => session.session_code === sessionCode)
   const latestEvent = events[0]
+  const latestVisibleEvent = events.find(
+    (event) => event.detections.length > 0 && (latestEvent?.timestamp ?? event.timestamp) - event.timestamp <= 2_000,
+  )
   const selectedSessionEdgeResults = activeSession?.metadata_json.edge_start_results ?? []
   const streamCamera = findStreamCamera(activeSession, cameraNodes, selectedCamIds)
   const streamUrl = showStream && streamCamera ? buildStreamUrl(streamCamera, streamFps, showOverlay) : null
@@ -629,10 +632,10 @@ function LiveAssessment({
           <Box className="livePreview">
             {streamUrl ? (
               <img className="cameraStream" src={streamUrl} alt={`${streamCamera?.cam_id ?? 'Camera'} live stream`} />
-            ) : latestEvent?.detections.length ? (
+            ) : latestVisibleEvent?.detections.length ? (
               <>
-                <Typography variant="h6">{latestEvent.detections.length} worker(s) detected</Typography>
-                <Typography>Latest frame: {latestEvent.frame_id}</Typography>
+                <Typography variant="h6">{latestVisibleEvent.detections.length} worker(s) detected</Typography>
+                <Typography>Latest frame: {latestVisibleEvent.frame_id}</Typography>
               </>
             ) : !streamCamera ? (
               <Typography color="text.secondary">Pair a camera node with an edge stream URL to show live video.</Typography>
@@ -640,7 +643,7 @@ function LiveAssessment({
               <Typography color="text.secondary">Waiting for Raspberry Pi detection events.</Typography>
             )}
           </Box>
-          <DetectionInsights latestEvent={latestEvent} events={events} />
+          <DetectionInsights latestEvent={latestVisibleEvent} events={events} />
         </Box>
       </Paper>
     </Stack>
