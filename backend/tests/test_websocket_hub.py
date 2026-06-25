@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.detection import Detection
+from app.models.session_worker import SessionWorker
 
 
 def get_token(client: TestClient) -> str:
@@ -123,7 +124,29 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
                                 {"id": 0, "name": "nose", "x": 231.0, "y": 96.0, "score": 0.86}
                             ],
                         },
-                        "metadata": {"model": "yolov8s_pose_h8"},
+                        "metadata": {"model": "yolov8s_pose_h8", "identity_status": "new"},
+                    }
+                ],
+            }
+        )
+        assert edge_ws.receive_json()["event_type"] == "ack"
+        edge_ws.send_json(
+            {
+                "schema_version": "1.0",
+                "event_type": "detection",
+                "cam_id": "CAM_01",
+                "session_id": session_code,
+                "timestamp": 1718742954123,
+                "frame_id": 101,
+                "detections": [
+                    {
+                        "worker_id": "WORKER_E47A",
+                        "tracking_id": 9,
+                        "confidence": 0.9,
+                        "reid_confidence": 0.91,
+                        "bbox": [124.0, 82.0, 418.0, 718.0],
+                        "keypoints": {"format": "coco17", "points": []},
+                        "metadata": {"identity_status": "reacquired"},
                     }
                 ],
             }
@@ -131,6 +154,12 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
         assert edge_ws.receive_json()["event_type"] == "ack"
 
     detections = list(db_session.scalars(select(Detection)))
-    assert len(detections) == 1
+    assert len(detections) == 2
     assert detections[0].edge_worker_id == "WORKER_E47A"
     assert detections[0].frame_id == 100
+    session_workers = list(db_session.scalars(select(SessionWorker)))
+    assert len(session_workers) == 1
+    assert session_workers[0].edge_worker_id == "WORKER_E47A"
+    assert session_workers[0].tracking_id == 9
+    assert session_workers[0].identity_status == "reacquired"
+    assert all(detection.session_worker_id == session_workers[0].id for detection in detections)

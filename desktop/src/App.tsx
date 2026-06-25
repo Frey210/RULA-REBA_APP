@@ -705,6 +705,7 @@ function WorkerInsightCard({ detection }: { detection: LiveDetection }) {
   const reba = readRiskScore(detection.metadata?.reba)
   const angles = readAngles(detection.metadata?.angles)
   const assessmentQuality = readAssessmentQuality(detection.metadata?.assessment_quality)
+  const identityStatus = readMetadataString(detection.metadata?.identity_status)
   const keypointCount = detection.keypoints?.points.length ?? 0
   const bbox = detection.bbox.map((value) => Math.round(value))
   return (
@@ -721,6 +722,7 @@ function WorkerInsightCard({ detection }: { detection: LiveDetection }) {
         <Chip size="small" label={`RULA ${rula.score} ${rula.risk}`} color={riskColor(rula.risk)} />
         <Chip size="small" label={`REBA ${reba.score} ${reba.risk}`} color={riskColor(reba.risk)} />
         <Chip size="small" variant="outlined" label={`Pose ${assessmentQuality}`} />
+        <Chip size="small" variant="outlined" label={`Identity ${identityStatus}`} />
       </Box>
 
       <Box className="detailGrid">
@@ -773,6 +775,10 @@ function readAssessmentQuality(value: unknown): string {
   if (typeof value !== 'object' || value === null) return 'unknown'
   const status = (value as Record<string, unknown>).status
   return typeof status === 'string' ? status : 'unknown'
+}
+
+function readMetadataString(value: unknown): string {
+  return typeof value === 'string' && value ? value : 'unknown'
 }
 
 function riskColor(risk: string): 'success' | 'warning' | 'error' | 'default' {
