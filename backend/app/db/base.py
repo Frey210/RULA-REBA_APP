@@ -14,7 +14,7 @@ from app.models import (  # noqa: F401
     Snapshot,
     User,
     Worker,
+    WorkerEnrollmentImage,
 )
 
 __all__ = ["Base"]
-

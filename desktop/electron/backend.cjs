@@ -23,7 +23,7 @@ async function main() {
 
   child = spawn(
     pythonPath,
-    ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'],
+    ['-m', 'alembic', 'upgrade', 'head'],
     {
       cwd: backendDir,
       env: {
@@ -36,12 +36,43 @@ async function main() {
   )
 
   child.on('exit', (code, signal) => {
+    if (!stopping) {
+      if (code === 0) {
+        startBackend()
+        return
+      }
+      child = null
+      console.error(`Database migration failed (${signal || code || 0}).`)
+      process.exit(code || 1)
+    }
+  })
+}
+
+function startBackend() {
+  child = spawn(
+    pythonPath,
+    ['-m', 'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', '8000'],
+    {
+      cwd: backendDir,
+      env: backendEnvironment(),
+      stdio: 'inherit',
+      windowsHide: true,
+    },
+  )
+  child.on('exit', (code, signal) => {
     child = null
     if (!stopping) {
       console.error(`Backend stopped unexpectedly (${signal || code || 0}).`)
       process.exit(code || 1)
     }
   })
+}
+
+function backendEnvironment() {
+  return {
+    ...process.env,
+    DATABASE_URL: process.env.ERGOQUIPT_DATABASE_URL || 'sqlite:///./dev_server.sqlite3',
+  }
 }
 
 function isPortOpen(port) {

@@ -16,3 +16,4 @@ htmlcov/
 *.sqlite3
 *.db
 storage/
+backend/media/

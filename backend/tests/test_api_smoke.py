@@ -1,4 +1,7 @@
+from io import BytesIO
+
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy.orm import Session
 
 from app.models.session_worker import SessionWorker
@@ -21,6 +24,12 @@ def register_and_login(client: TestClient, email: str = "operator@example.com") 
 
 def auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def jpeg_image(width: int = 480, height: int = 720) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (width, height), color=(42, 110, 102)).save(buffer, format="JPEG")
+    return buffer.getvalue()
 
 
 def test_health_and_version(client: TestClient) -> None:
@@ -210,3 +219,58 @@ def test_session_worker_assignment_is_user_scoped(client: TestClient, db_session
     assert assigned.json()["worker_name"] == "Assigned Worker"
     assert assigned.json()["identity_status"] == "confirmed"
     assert assigned.json()["confirmed_at"] is not None
+
+
+def test_worker_enrollment_images_are_private_and_replaceable(client: TestClient) -> None:
+    token_a = register_and_login(client, "photo-a@example.com")
+    token_b = register_and_login(client, "photo-b@example.com")
+    worker = client.post(
+        "/api/v1/workers",
+        headers=auth_header(token_a),
+        json={"employee_number": "PHOTO-1", "name": "Photo Worker"},
+    ).json()
+
+    uploaded = client.put(
+        f"/api/v1/workers/{worker['id']}/enrollment-images/front",
+        headers=auth_header(token_a),
+        files={"file": ("front.jpg", jpeg_image(), "image/jpeg")},
+    )
+    assert uploaded.status_code == 200
+    assert uploaded.json()["view"] == "front"
+    assert uploaded.json()["width"] == 480
+
+    hidden = client.get(
+        f"/api/v1/workers/{worker['id']}/enrollment-images",
+        headers=auth_header(token_b),
+    )
+    assert hidden.status_code == 404
+
+    content = client.get(uploaded.json()["image_url"], headers=auth_header(token_a))
+    assert content.status_code == 200
+    assert content.headers["content-type"] == "image/jpeg"
+
+    replaced = client.put(
+        f"/api/v1/workers/{worker['id']}/enrollment-images/front",
+        headers=auth_header(token_a),
+        files={"file": ("front-new.jpg", jpeg_image(600, 900), "image/jpeg")},
+    )
+    assert replaced.status_code == 200
+    assert replaced.json()["id"] == uploaded.json()["id"]
+    assert replaced.json()["width"] == 600
+    assert len(client.get(
+        f"/api/v1/workers/{worker['id']}/enrollment-images",
+        headers=auth_header(token_a),
+    ).json()) == 1
+
+    too_small = client.put(
+        f"/api/v1/workers/{worker['id']}/enrollment-images/left",
+        headers=auth_header(token_a),
+        files={"file": ("small.jpg", jpeg_image(200, 300), "image/jpeg")},
+    )
+    assert too_small.status_code == 400
+
+    removed = client.delete(
+        f"/api/v1/workers/{worker['id']}/enrollment-images/front",
+        headers=auth_header(token_a),
+    )
+    assert removed.status_code == 204

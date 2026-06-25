@@ -12,6 +12,7 @@ from app.models.session_worker import SessionWorker
 from app.models.snapshot import Snapshot
 from app.models.user import User
 from app.models.worker import Worker
+from app.models.worker_enrollment_image import WorkerEnrollmentImage
 
 __all__ = [
     "Activity",
@@ -28,5 +29,5 @@ __all__ = [
     "Snapshot",
     "User",
     "Worker",
+    "WorkerEnrollmentImage",
 ]
-

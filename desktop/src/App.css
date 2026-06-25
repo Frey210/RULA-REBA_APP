@@ -77,6 +77,51 @@
   flex-wrap: wrap;
 }
 
+.workerRegistryEntry {
+  padding: 8px 0 18px;
+  border-bottom: 1px solid #eef1f2;
+}
+
+.enrollmentSection {
+  padding-top: 12px;
+}
+
+.enrollmentHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.enrollmentGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 180px));
+  gap: 12px;
+}
+
+.enrollmentView {
+  display: grid;
+  gap: 8px;
+}
+
+.enrollmentPreview {
+  aspect-ratio: 3 / 4;
+  border: 1px solid #dde2e4;
+  border-radius: 8px;
+  background: #f4f6f7;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: #718080;
+}
+
+.enrollmentPreview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .deviceRow {
   flex-wrap: wrap;
 }

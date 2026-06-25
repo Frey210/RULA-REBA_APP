@@ -52,3 +52,8 @@ npm.cmd run electron
 
 It uses `backend\.venv` and the local SQLite database `backend\dev_server.sqlite3`.
 Set `ERGOQUIPT_DATABASE_URL` before launching only when a different database is required.
+Pending Alembic migrations are applied automatically before FastAPI starts.
+
+Worker enrollment photos are stored privately under `backend\media\worker-enrollments`.
+The frontend retrieves them through authenticated API requests; the media directory
+is intentionally excluded from Git.

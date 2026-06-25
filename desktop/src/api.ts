@@ -69,13 +69,27 @@ export type SessionWorkerRecord = {
   confirmed_at: string | null
 }
 
+export type WorkerEnrollmentImage = {
+  id: string
+  worker_id: string
+  view: 'front' | 'left' | 'right'
+  content_type: string
+  file_size: number
+  width: number
+  height: number
+  updated_at: string
+  image_url: string
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
   token?: string | null,
 ): Promise<T> {
   const headers = new Headers(options.headers)
-  headers.set('Content-Type', 'application/json')
+  if (!(options.body instanceof FormData)) {
+    headers.set('Content-Type', 'application/json')
+  }
   if (token) {
     headers.set('Authorization', `Bearer ${token}`)
   }
@@ -105,6 +119,16 @@ export async function apiRequest<T>(
   }
 
   return (await response.json()) as T
+}
+
+export async function apiBlob(path: string, token: string): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!response.ok) {
+    throw new Error(await response.text() || `Request failed: ${response.status}`)
+  }
+  return response.blob()
 }
 
 export function liveWebSocketUrl(sessionId: string, token: string): string {

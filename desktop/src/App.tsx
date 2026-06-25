@@ -46,6 +46,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import './App.css'
 import {
+  apiBlob,
   apiRequest,
   liveWebSocketUrl,
 } from './api'
@@ -55,6 +56,7 @@ import type {
   PairingToken,
   SessionRecord,
   SessionWorkerRecord,
+  WorkerEnrollmentImage,
   WorkerRecord,
 } from './api'
 import type { DiscoveredDevice } from './types'
@@ -1037,31 +1039,161 @@ function WorkerRegistry({
         <Typography variant="h6">Worker Registry</Typography>
         <Divider sx={{ my: 2 }} />
         {workers.length ? workers.map((worker) => (
-          <Box key={worker.id} className="rowLine rowFlex workerRegistryRow">
-            <Box sx={{ flex: 1, minWidth: 220 }}>
-              <Typography sx={{ fontWeight: 700 }}>{worker.name}</Typography>
-              <Typography variant="body2" color="text.secondary">
-                {[worker.employee_number, worker.department, worker.position].filter(Boolean).join(' - ') || 'No additional details'}
-              </Typography>
+          <Box key={worker.id} className="workerRegistryEntry">
+            <Box className="rowLine rowFlex workerRegistryRow">
+              <Box sx={{ flex: 1, minWidth: 220 }}>
+                <Typography sx={{ fontWeight: 700 }}>{worker.name}</Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {[worker.employee_number, worker.department, worker.position].filter(Boolean).join(' - ') || 'No additional details'}
+                </Typography>
+              </Box>
+              <Chip size="small" label={worker.is_active ? 'active' : 'inactive'} color={worker.is_active ? 'success' : 'default'} />
+              {worker.is_active ? (
+                <Button
+                  color="error"
+                  size="small"
+                  startIcon={<Trash2 size={16} />}
+                  disabled={loading}
+                  onClick={() => void deactivateWorker(worker.id)}
+                >
+                  Deactivate
+                </Button>
+              ) : null}
             </Box>
-            <Chip size="small" label={worker.is_active ? 'active' : 'inactive'} color={worker.is_active ? 'success' : 'default'} />
-            {worker.is_active ? (
-              <Button
-                color="error"
-                size="small"
-                startIcon={<Trash2 size={16} />}
-                disabled={loading}
-                onClick={() => void deactivateWorker(worker.id)}
-              >
-                Deactivate
-              </Button>
-            ) : null}
+            <WorkerEnrollmentGallery token={token} worker={worker} />
           </Box>
         )) : (
           <Typography color="text.secondary">No workers registered.</Typography>
         )}
       </Paper>
     </Stack>
+  )
+}
+
+const enrollmentViews = [
+  { key: 'front', label: 'Front' },
+  { key: 'left', label: 'Left Side' },
+  { key: 'right', label: 'Right Side' },
+] as const
+
+function WorkerEnrollmentGallery({ token, worker }: { token: string; worker: WorkerRecord }) {
+  const [images, setImages] = useState<WorkerEnrollmentImage[]>([])
+  const [imageUrls, setImageUrls] = useState<Record<string, string>>({})
+  const [message, setMessage] = useState<string | null>(null)
+  const [loadingView, setLoadingView] = useState<string | null>(null)
+
+  const loadImages = useCallback(async () => {
+    const records = await apiRequest<WorkerEnrollmentImage[]>(
+      `/api/v1/workers/${worker.id}/enrollment-images`,
+      {},
+      token,
+    )
+    const nextUrls: Record<string, string> = {}
+    await Promise.all(records.map(async (record) => {
+      const blob = await apiBlob(record.image_url, token)
+      nextUrls[record.view] = URL.createObjectURL(blob)
+    }))
+    setImageUrls((current) => {
+      Object.values(current).forEach((url) => URL.revokeObjectURL(url))
+      return nextUrls
+    })
+    setImages(records)
+  }, [token, worker.id])
+
+  useEffect(() => {
+    void loadImages().catch(() => setMessage('Failed to load enrollment photos.'))
+    return () => {
+      setImageUrls((current) => {
+        Object.values(current).forEach((url) => URL.revokeObjectURL(url))
+        return {}
+      })
+    }
+  }, [loadImages])
+
+  async function upload(view: string, file: File | undefined) {
+    if (!file) return
+    setLoadingView(view)
+    setMessage(null)
+    const form = new FormData()
+    form.append('file', file)
+    try {
+      await apiRequest(
+        `/api/v1/workers/${worker.id}/enrollment-images/${view}`,
+        { method: 'PUT', body: form },
+        token,
+      )
+      await loadImages()
+      setMessage(`${view} view updated.`)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Upload failed.')
+    } finally {
+      setLoadingView(null)
+    }
+  }
+
+  async function remove(view: string) {
+    setLoadingView(view)
+    try {
+      await apiRequest(
+        `/api/v1/workers/${worker.id}/enrollment-images/${view}`,
+        { method: 'DELETE' },
+        token,
+      )
+      await loadImages()
+      setMessage(`${view} view removed.`)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Delete failed.')
+    } finally {
+      setLoadingView(null)
+    }
+  }
+
+  return (
+    <Box className="enrollmentSection">
+      <Box className="enrollmentHeader">
+        <Box>
+          <Typography sx={{ fontWeight: 700 }}>Full-body enrollment</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Front, left, and right views with normal work PPE.
+          </Typography>
+        </Box>
+        <Chip size="small" label={`${images.length}/3 views`} color={images.length === 3 ? 'success' : 'default'} />
+      </Box>
+      <Box className="enrollmentGrid">
+        {enrollmentViews.map((view) => (
+          <Box key={view.key} className="enrollmentView">
+            <Box className="enrollmentPreview">
+              {imageUrls[view.key] ? (
+                <img src={imageUrls[view.key]} alt={`${worker.name} ${view.label}`} />
+              ) : (
+                <UserRound size={34} />
+              )}
+            </Box>
+            <Typography variant="body2" sx={{ fontWeight: 700 }}>{view.label}</Typography>
+            <Stack direction="row" spacing={1}>
+              <Button component="label" size="small" variant="outlined" disabled={loadingView === view.key}>
+                {imageUrls[view.key] ? 'Replace' : 'Upload'}
+                <input
+                  hidden
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  onChange={(event) => {
+                    void upload(view.key, event.target.files?.[0])
+                    event.target.value = ''
+                  }}
+                />
+              </Button>
+              {imageUrls[view.key] ? (
+                <Button color="error" size="small" disabled={loadingView === view.key} onClick={() => void remove(view.key)}>
+                  Remove
+                </Button>
+              ) : null}
+            </Stack>
+          </Box>
+        ))}
+      </Box>
+      {message ? <Typography variant="caption" color="text.secondary">{message}</Typography> : null}
+    </Box>
   )
 }
 
