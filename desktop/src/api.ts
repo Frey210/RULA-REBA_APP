@@ -47,6 +47,28 @@ export type EdgeCommandResult = {
   detail: string
 }
 
+export type WorkerRecord = {
+  id: string
+  employee_number: string | null
+  name: string
+  department: string | null
+  position: string | null
+  is_active: boolean
+}
+
+export type SessionWorkerRecord = {
+  id: string
+  session_id: string
+  worker_id: string | null
+  worker_name: string | null
+  employee_number: string | null
+  edge_worker_id: string
+  tracking_id: number | null
+  identity_status: string
+  reid_confidence: number | null
+  confirmed_at: string | null
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},

@@ -10,8 +10,10 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.camera_node import CameraNode
 from app.models.session import Session
+from app.models.session_worker import SessionWorker
 from app.models.user import User
-from app.schemas.session import SessionCreate, SessionRead
+from app.models.worker import Worker
+from app.schemas.session import SessionCreate, SessionRead, SessionWorkerAssign, SessionWorkerRead
 from app.services.session_codes import create_session_code
 
 router = APIRouter()
@@ -109,11 +111,69 @@ def stop_session(
     return session
 
 
+@router.get("/{session_id}/workers", response_model=list[SessionWorkerRead])
+def list_session_workers(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> list[SessionWorkerRead]:
+    session = _get_owned_session(session_id, current_user, db)
+    rows = db.execute(
+        select(SessionWorker, Worker)
+        .outerjoin(Worker, SessionWorker.worker_id == Worker.id)
+        .where(SessionWorker.session_id == session.id)
+        .order_by(SessionWorker.created_at)
+    ).all()
+    return [_session_worker_read(session_worker, worker) for session_worker, worker in rows]
+
+
+@router.patch("/{session_id}/workers/{session_worker_id}", response_model=SessionWorkerRead)
+def assign_session_worker(
+    session_id: str,
+    session_worker_id: str,
+    payload: SessionWorkerAssign,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> SessionWorkerRead:
+    session = _get_owned_session(session_id, current_user, db)
+    session_worker = db.get(SessionWorker, session_worker_id)
+    if session_worker is None or session_worker.session_id != session.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session worker not found")
+
+    worker = None
+    if payload.worker_id:
+        worker = db.get(Worker, payload.worker_id)
+        if worker is None or worker.owner_user_id != current_user.id or not worker.is_active:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+
+    session_worker.worker_id = worker.id if worker else None
+    session_worker.identity_status = "confirmed" if worker else "unconfirmed"
+    session_worker.confirmed_at = datetime.now(UTC) if worker else None
+    db.commit()
+    db.refresh(session_worker)
+    return _session_worker_read(session_worker, worker)
+
+
 def _get_owned_session(session_id: str, current_user: User, db: DbSession) -> Session:
     session = db.get(Session, session_id)
     if session is None or session.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return session
+
+
+def _session_worker_read(session_worker: SessionWorker, worker: Worker | None) -> SessionWorkerRead:
+    return SessionWorkerRead(
+        id=session_worker.id,
+        session_id=session_worker.session_id,
+        worker_id=session_worker.worker_id,
+        worker_name=worker.name if worker else None,
+        employee_number=worker.employee_number if worker else None,
+        edge_worker_id=session_worker.edge_worker_id,
+        tracking_id=session_worker.tracking_id,
+        identity_status=session_worker.identity_status,
+        reid_confidence=session_worker.reid_confidence,
+        confirmed_at=session_worker.confirmed_at,
+    )
 
 
 def _start_edges_for_session(session: Session, current_user: User, db: DbSession) -> list[dict]:

@@ -19,3 +19,20 @@ class SessionRead(BaseModel):
     metadata_json: dict
 
     model_config = {"from_attributes": True}
+
+
+class SessionWorkerAssign(BaseModel):
+    worker_id: str | None = None
+
+
+class SessionWorkerRead(BaseModel):
+    id: str
+    session_id: str
+    worker_id: str | None
+    worker_name: str | None = None
+    employee_number: str | None = None
+    edge_worker_id: str
+    tracking_id: int | None
+    identity_status: str
+    reid_confidence: float | None
+    confirmed_at: datetime | None

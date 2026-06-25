@@ -40,7 +40,8 @@ def persist_detection_event(db: DbSession, event: EdgeDetectionEvent) -> int:
             db.flush()
         else:
             session_worker.tracking_id = detection.tracking_id
-            session_worker.identity_status = identity_status
+            if session_worker.worker_id is None:
+                session_worker.identity_status = identity_status
             session_worker.reid_confidence = detection.reid_confidence
 
         db.add(

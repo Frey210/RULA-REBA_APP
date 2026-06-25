@@ -1,4 +1,7 @@
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from app.models.session_worker import SessionWorker
 
 
 def register_and_login(client: TestClient, email: str = "operator@example.com") -> str:
@@ -154,3 +157,56 @@ def test_scoring_preview_requires_auth_and_returns_score(client: TestClient) -> 
     assert response.status_code == 200
     assert response.json()["assessment_type"] == "reba"
     assert response.json()["score"] >= 1
+
+
+def test_session_worker_assignment_is_user_scoped(client: TestClient, db_session: Session) -> None:
+    token_a = register_and_login(client, "assign-a@example.com")
+    token_b = register_and_login(client, "assign-b@example.com")
+    worker_a = client.post(
+        "/api/v1/workers",
+        headers=auth_header(token_a),
+        json={"employee_number": "EMP-A", "name": "Assigned Worker"},
+    ).json()
+    worker_b = client.post(
+        "/api/v1/workers",
+        headers=auth_header(token_b),
+        json={"employee_number": "EMP-B", "name": "Other Worker"},
+    ).json()
+    session = client.post(
+        "/api/v1/sessions",
+        headers=auth_header(token_a),
+        json={"camera_node_ids": [], "notes": "Assignment test"},
+    ).json()
+    session_worker = SessionWorker(
+        session_id=session["id"],
+        edge_worker_id="REID_0001",
+        tracking_id=3,
+        identity_status="tracked",
+        reid_confidence=0.91,
+    )
+    db_session.add(session_worker)
+    db_session.commit()
+    db_session.refresh(session_worker)
+
+    hidden = client.get(
+        f"/api/v1/sessions/{session['id']}/workers",
+        headers=auth_header(token_b),
+    )
+    assert hidden.status_code == 404
+
+    foreign_assignment = client.patch(
+        f"/api/v1/sessions/{session['id']}/workers/{session_worker.id}",
+        headers=auth_header(token_a),
+        json={"worker_id": worker_b["id"]},
+    )
+    assert foreign_assignment.status_code == 404
+
+    assigned = client.patch(
+        f"/api/v1/sessions/{session['id']}/workers/{session_worker.id}",
+        headers=auth_header(token_a),
+        json={"worker_id": worker_a["id"]},
+    )
+    assert assigned.status_code == 200
+    assert assigned.json()["worker_name"] == "Assigned Worker"
+    assert assigned.json()["identity_status"] == "confirmed"
+    assert assigned.json()["confirmed_at"] is not None

@@ -66,6 +66,17 @@
   gap: 8px;
 }
 
+.workerForm {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr)) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.workerRegistryRow {
+  flex-wrap: wrap;
+}
+
 .deviceRow {
   flex-wrap: wrap;
 }
@@ -261,5 +272,9 @@
 
   .angleGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .workerForm {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

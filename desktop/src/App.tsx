@@ -39,6 +39,7 @@ import {
   Settings,
   ShieldCheck,
   Trash2,
+  UserRound,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -48,7 +49,14 @@ import {
   apiRequest,
   liveWebSocketUrl,
 } from './api'
-import type { AuthTokens, CameraNode, PairingToken, SessionRecord } from './api'
+import type {
+  AuthTokens,
+  CameraNode,
+  PairingToken,
+  SessionRecord,
+  SessionWorkerRecord,
+  WorkerRecord,
+} from './api'
 import type { DiscoveredDevice } from './types'
 
 const drawerWidth = 248
@@ -59,6 +67,7 @@ const navItems = [
   { key: 'live', label: 'Live Assessment', icon: Activity },
   { key: 'review', label: 'Session Review', icon: ClipboardCheck },
   { key: 'history', label: 'History', icon: History },
+  { key: 'workers', label: 'Workers', icon: UserRound },
   { key: 'reports', label: 'Reports', icon: FileText },
   { key: 'settings', label: 'Devices', icon: Settings },
 ]
@@ -90,6 +99,7 @@ function App() {
   const [activePage, setActivePage] = useState('dashboard')
   const [cameraNodes, setCameraNodes] = useState<CameraNode[]>([])
   const [sessions, setSessions] = useState<SessionRecord[]>([])
+  const [workers, setWorkers] = useState<WorkerRecord[]>([])
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking')
   const [error, setError] = useState<string | null>(null)
 
@@ -102,12 +112,14 @@ function App() {
   const refreshData = useCallback(async () => {
     if (!token) return
     try {
-      const [nodes, sessionRows] = await Promise.all([
+      const [nodes, sessionRows, workerRows] = await Promise.all([
         apiRequest<CameraNode[]>('/api/v1/camera-nodes', {}, token),
         apiRequest<SessionRecord[]>('/api/v1/sessions', {}, token),
+        apiRequest<WorkerRecord[]>('/api/v1/workers', {}, token),
       ])
       setCameraNodes(nodes)
       setSessions(sessionRows)
+      setWorkers(workerRows)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
@@ -139,6 +151,7 @@ function App() {
     setTokens(null)
     setCameraNodes([])
     setSessions([])
+    setWorkers([])
   }
 
   if (!tokens) {
@@ -208,6 +221,7 @@ function App() {
             token={tokens.access_token}
             cameraNodes={cameraNodes}
             sessions={sessions}
+            workers={workers}
             refreshData={refreshData}
           />
         </Box>
@@ -295,6 +309,7 @@ function Page({
   token,
   cameraNodes,
   sessions,
+  workers,
   refreshData,
 }: {
   activePage: string
@@ -302,16 +317,20 @@ function Page({
   token: string
   cameraNodes: CameraNode[]
   sessions: SessionRecord[]
+  workers: WorkerRecord[]
   refreshData: () => Promise<void>
 }) {
   if (activePage === 'live') {
-    return <LiveAssessment token={token} sessions={sessions} cameraNodes={cameraNodes} refreshData={refreshData} />
+    return <LiveAssessment token={token} sessions={sessions} workers={workers} cameraNodes={cameraNodes} refreshData={refreshData} />
   }
   if (activePage === 'settings') {
     return <SettingsPage token={token} cameraNodes={cameraNodes} refreshData={refreshData} />
   }
   if (activePage === 'history') {
     return <SessionList title="History" sessions={sessions} />
+  }
+  if (activePage === 'workers') {
+    return <WorkerRegistry token={token} workers={workers} refreshData={refreshData} />
   }
   if (activePage === 'reports') {
     return <Placeholder title="Reports" icon={FileText} />
@@ -393,11 +412,13 @@ type LiveDetection = {
 function LiveAssessment({
   token,
   sessions,
+  workers,
   cameraNodes,
   refreshData,
 }: {
   token: string
   sessions: SessionRecord[]
+  workers: WorkerRecord[]
   cameraNodes: CameraNode[]
   refreshData: () => Promise<void>
 }) {
@@ -405,6 +426,7 @@ function LiveAssessment({
   const [selectedCamIds, setSelectedCamIds] = useState<string[]>(() => cameraNodes.map((node) => node.cam_id).slice(0, 1))
   const [notes, setNotes] = useState('')
   const [events, setEvents] = useState<LiveDetectionEvent[]>([])
+  const [sessionWorkers, setSessionWorkers] = useState<SessionWorkerRecord[]>([])
   const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -440,6 +462,47 @@ function LiveAssessment({
     }
     return () => ws.close()
   }, [sessionCode, token])
+
+  useEffect(() => {
+    const sessionId = activeSession?.id
+    if (!sessionId) {
+      setSessionWorkers([])
+      return
+    }
+
+    async function loadSessionWorkers() {
+      try {
+        const rows = await apiRequest<SessionWorkerRecord[]>(
+          `/api/v1/sessions/${sessionId}/workers`,
+          {},
+          token,
+        )
+        setSessionWorkers(rows)
+      } catch {
+        setSessionWorkers([])
+      }
+    }
+
+    void loadSessionWorkers()
+    if (activeSession?.status !== 'running') return
+    const interval = window.setInterval(() => void loadSessionWorkers(), 1_500)
+    return () => window.clearInterval(interval)
+  }, [activeSession?.id, activeSession?.status, token])
+
+  async function assignWorker(sessionWorkerId: string, workerId: string | null) {
+    if (!activeSession) return
+    const updated = await apiRequest<SessionWorkerRecord>(
+      `/api/v1/sessions/${activeSession.id}/workers/${sessionWorkerId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ worker_id: workerId }),
+      },
+      token,
+    )
+    setSessionWorkers((current) =>
+      current.map((row) => row.id === updated.id ? updated : row),
+    )
+  }
 
   async function createAndStartSession() {
     if (!selectedCamIds.length) {
@@ -643,7 +706,13 @@ function LiveAssessment({
               <Typography color="text.secondary">Waiting for Raspberry Pi detection events.</Typography>
             )}
           </Box>
-          <DetectionInsights latestEvent={latestVisibleEvent} events={events} />
+          <DetectionInsights
+            latestEvent={latestVisibleEvent}
+            events={events}
+            workers={workers}
+            sessionWorkers={sessionWorkers}
+            assignWorker={assignWorker}
+          />
         </Box>
       </Paper>
     </Stack>
@@ -653,9 +722,15 @@ function LiveAssessment({
 function DetectionInsights({
   latestEvent,
   events,
+  workers,
+  sessionWorkers,
+  assignWorker,
 }: {
   latestEvent: LiveDetectionEvent | undefined
   events: LiveDetectionEvent[]
+  workers: WorkerRecord[]
+  sessionWorkers: SessionWorkerRecord[]
+  assignWorker: (sessionWorkerId: string, workerId: string | null) => Promise<void>
 }) {
   if (!latestEvent || !latestEvent.detections.length) {
     return (
@@ -680,7 +755,13 @@ function DetectionInsights({
 
       <Box className="workerList">
         {latestEvent.detections.map((detection) => (
-          <WorkerInsightCard key={`${detection.worker_id}-${detection.tracking_id}`} detection={detection} />
+          <WorkerInsightCard
+            key={`${detection.worker_id}-${detection.tracking_id}`}
+            detection={detection}
+            workers={workers}
+            sessionWorker={sessionWorkers.find((row) => row.edge_worker_id === detection.worker_id)}
+            assignWorker={assignWorker}
+          />
         ))}
       </Box>
 
@@ -703,7 +784,17 @@ function DetectionInsights({
   )
 }
 
-function WorkerInsightCard({ detection }: { detection: LiveDetection }) {
+function WorkerInsightCard({
+  detection,
+  workers,
+  sessionWorker,
+  assignWorker,
+}: {
+  detection: LiveDetection
+  workers: WorkerRecord[]
+  sessionWorker?: SessionWorkerRecord
+  assignWorker: (sessionWorkerId: string, workerId: string | null) => Promise<void>
+}) {
   const rula = readRiskScore(detection.metadata?.rula)
   const reba = readRiskScore(detection.metadata?.reba)
   const angles = readAngles(detection.metadata?.angles)
@@ -715,11 +806,40 @@ function WorkerInsightCard({ detection }: { detection: LiveDetection }) {
     <Box className="workerCard">
       <Box className="workerCardHeader">
         <Box>
-          <Typography variant="caption" color="text.secondary">Worker</Typography>
-          <Typography sx={{ fontWeight: 700 }}>{detection.worker_id}</Typography>
+          <Typography variant="caption" color="text.secondary">
+            {sessionWorker?.worker_name ? 'Confirmed Worker' : 'Edge Worker'}
+          </Typography>
+          <Typography sx={{ fontWeight: 700 }}>
+            {sessionWorker?.worker_name ?? detection.worker_id}
+          </Typography>
+          {sessionWorker?.employee_number ? (
+            <Typography variant="caption" color="text.secondary">
+              {sessionWorker.employee_number} - {detection.worker_id}
+            </Typography>
+          ) : null}
         </Box>
         <Chip size="small" label={`Track #${detection.tracking_id}`} />
       </Box>
+
+      <TextField
+        select
+        size="small"
+        label="Assign worker"
+        value={sessionWorker?.worker_id ?? ''}
+        disabled={!sessionWorker}
+        onChange={(event) => {
+          if (sessionWorker) {
+            void assignWorker(sessionWorker.id, event.target.value || null)
+          }
+        }}
+      >
+        <MenuItem value="">Unconfirmed</MenuItem>
+        {workers.filter((worker) => worker.is_active).map((worker) => (
+          <MenuItem key={worker.id} value={worker.id}>
+            {worker.name}{worker.employee_number ? ` (${worker.employee_number})` : ''}
+          </MenuItem>
+        ))}
+      </TextField>
 
       <Box className="workerScoreRow">
         <Chip size="small" label={`RULA ${rula.score} ${rula.risk}`} color={riskColor(rula.risk)} />
@@ -832,6 +952,117 @@ function buildStreamUrl(camera: CameraNode, fps: number, overlay: boolean): stri
   url.searchParams.set('quality', '65')
   url.searchParams.set('overlay', overlay ? 'true' : 'false')
   return url.toString()
+}
+
+function WorkerRegistry({
+  token,
+  workers,
+  refreshData,
+}: {
+  token: string
+  workers: WorkerRecord[]
+  refreshData: () => Promise<void>
+}) {
+  const [name, setName] = useState('')
+  const [employeeNumber, setEmployeeNumber] = useState('')
+  const [department, setDepartment] = useState('')
+  const [position, setPosition] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function createWorker() {
+    if (!name.trim()) {
+      setMessage('Worker name is required.')
+      return
+    }
+    setLoading(true)
+    setMessage(null)
+    try {
+      await apiRequest<WorkerRecord>(
+        '/api/v1/workers',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            name: name.trim(),
+            employee_number: employeeNumber.trim() || null,
+            department: department.trim() || null,
+            position: position.trim() || null,
+          }),
+        },
+        token,
+      )
+      setName('')
+      setEmployeeNumber('')
+      setDepartment('')
+      setPosition('')
+      await refreshData()
+      setMessage('Worker added.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to add worker.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function deactivateWorker(workerId: string) {
+    setLoading(true)
+    try {
+      await apiRequest(`/api/v1/workers/${workerId}`, { method: 'DELETE' }, token)
+      await refreshData()
+      setMessage('Worker deactivated.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to deactivate worker.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Stack spacing={3}>
+      <PageTitle title="Workers" action={<Button onClick={refreshData}>Refresh</Button>} />
+      <Paper className="panel" elevation={0}>
+        <Typography variant="h6">Add Worker</Typography>
+        <Divider sx={{ my: 2 }} />
+        <Box className="workerForm">
+          <TextField label="Name" value={name} onChange={(event) => setName(event.target.value)} />
+          <TextField label="Employee number" value={employeeNumber} onChange={(event) => setEmployeeNumber(event.target.value)} />
+          <TextField label="Department" value={department} onChange={(event) => setDepartment(event.target.value)} />
+          <TextField label="Position" value={position} onChange={(event) => setPosition(event.target.value)} />
+          <Button variant="contained" disabled={loading} onClick={createWorker}>Add Worker</Button>
+        </Box>
+        {loading ? <LinearProgress sx={{ mt: 2 }} /> : null}
+        {message ? <Alert severity="info" sx={{ mt: 2 }}>{message}</Alert> : null}
+      </Paper>
+      <Paper className="panel" elevation={0}>
+        <Typography variant="h6">Worker Registry</Typography>
+        <Divider sx={{ my: 2 }} />
+        {workers.length ? workers.map((worker) => (
+          <Box key={worker.id} className="rowLine rowFlex workerRegistryRow">
+            <Box sx={{ flex: 1, minWidth: 220 }}>
+              <Typography sx={{ fontWeight: 700 }}>{worker.name}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {[worker.employee_number, worker.department, worker.position].filter(Boolean).join(' - ') || 'No additional details'}
+              </Typography>
+            </Box>
+            <Chip size="small" label={worker.is_active ? 'active' : 'inactive'} color={worker.is_active ? 'success' : 'default'} />
+            {worker.is_active ? (
+              <Button
+                color="error"
+                size="small"
+                startIcon={<Trash2 size={16} />}
+                disabled={loading}
+                onClick={() => void deactivateWorker(worker.id)}
+              >
+                Deactivate
+              </Button>
+            ) : null}
+          </Box>
+        )) : (
+          <Typography color="text.secondary">No workers registered.</Typography>
+        )}
+      </Paper>
+    </Stack>
+  )
 }
 
 function SettingsPage({
