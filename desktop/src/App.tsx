@@ -703,6 +703,8 @@ function DetectionInsights({
 function WorkerInsightCard({ detection }: { detection: LiveDetection }) {
   const rula = readRiskScore(detection.metadata?.rula)
   const reba = readRiskScore(detection.metadata?.reba)
+  const angles = readAngles(detection.metadata?.angles)
+  const assessmentQuality = readAssessmentQuality(detection.metadata?.assessment_quality)
   const keypointCount = detection.keypoints?.points.length ?? 0
   const bbox = detection.bbox.map((value) => Math.round(value))
   return (
@@ -718,6 +720,7 @@ function WorkerInsightCard({ detection }: { detection: LiveDetection }) {
       <Box className="workerScoreRow">
         <Chip size="small" label={`RULA ${rula.score} ${rula.risk}`} color={riskColor(rula.risk)} />
         <Chip size="small" label={`REBA ${reba.score} ${reba.risk}`} color={riskColor(reba.risk)} />
+        <Chip size="small" variant="outlined" label={`Pose ${assessmentQuality}`} />
       </Box>
 
       <Box className="detailGrid">
@@ -725,6 +728,14 @@ function WorkerInsightCard({ detection }: { detection: LiveDetection }) {
         <InsightValue label="Re-ID" value={formatPercent(detection.reid_confidence)} />
         <InsightValue label="Keypoints" value={String(keypointCount)} />
         <InsightValue label="BBox" value={bbox.length ? bbox.join(', ') : '-'} />
+      </Box>
+
+      <Box className="angleGrid">
+        <InsightValue label="Neck" value={formatAngle(angles.neck)} />
+        <InsightValue label="Trunk" value={formatAngle(angles.trunk)} />
+        <InsightValue label="Upper Arm" value={formatAngle(maxAngle(angles.ua_l, angles.ua_r))} />
+        <InsightValue label="Elbow" value={formatAngle(maxAngle(angles.la_l, angles.la_r))} />
+        <InsightValue label="Knee" value={formatAngle(maxAngle(angles.leg_l, angles.leg_r))} />
       </Box>
     </Box>
   )
@@ -750,11 +761,35 @@ function readRiskScore(value: unknown): { score: string; risk: string } {
   }
 }
 
+function readAngles(value: unknown): Record<string, number> {
+  if (typeof value !== 'object' || value === null) return {}
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter((entry): entry is [string, number] => typeof entry[1] === 'number'),
+  )
+}
+
+function readAssessmentQuality(value: unknown): string {
+  if (typeof value !== 'object' || value === null) return 'unknown'
+  const status = (value as Record<string, unknown>).status
+  return typeof status === 'string' ? status : 'unknown'
+}
+
 function riskColor(risk: string): 'success' | 'warning' | 'error' | 'default' {
-  if (['low', 'negligible'].includes(risk.toLowerCase())) return 'success'
-  if (['medium', 'moderate'].includes(risk.toLowerCase())) return 'warning'
-  if (['high', 'very high'].includes(risk.toLowerCase())) return 'error'
+  const normalized = risk.toLowerCase()
+  if (['acceptable', 'low', 'negligible'].includes(normalized)) return 'success'
+  if (normalized.includes('further') || normalized.includes('medium') || normalized.includes('moderate')) return 'warning'
+  if (normalized.includes('high') || normalized.includes('soon') || normalized.includes('immediately')) return 'error'
   return 'default'
+}
+
+function maxAngle(left?: number, right?: number): number | undefined {
+  const values = [left, right].filter((value): value is number => typeof value === 'number')
+  return values.length ? Math.max(...values) : undefined
+}
+
+function formatAngle(value?: number): string {
+  return typeof value === 'number' ? `${Math.round(value)} deg` : '-'
 }
 
 function formatPercent(value?: number): string {

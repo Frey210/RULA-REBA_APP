@@ -128,7 +128,8 @@
   gap: 12px;
 }
 
-.detailGrid {
+.detailGrid,
+.angleGrid {
   display: grid;
   gap: 10px;
 }
@@ -160,6 +161,10 @@
 
 .detailGrid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.angleGrid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .insightValue {
@@ -252,5 +257,9 @@
   .livePreview,
   .insightPanel {
     min-height: 300px;
+  }
+
+  .angleGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
