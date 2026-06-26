@@ -77,6 +77,12 @@ export type WorkerEnrollmentImage = {
   file_size: number
   width: number
   height: number
+  quality_status: 'good' | 'review_needed' | string
+  quality_details: {
+    issues?: string[]
+    metrics?: Record<string, number | string>
+    [key: string]: unknown
+  }
   updated_at: string
   image_url: string
 }
@@ -110,8 +116,17 @@ export async function apiRequest<T>(
   }
 
   if (!response.ok) {
-    const detail = await response.text()
-    throw new Error(detail || `Request failed: ${response.status}`)
+    const detailText = await response.text()
+    let message = detailText
+    try {
+      const parsed = JSON.parse(detailText) as { detail?: unknown }
+      if (typeof parsed.detail === 'string') {
+        message = parsed.detail
+      }
+    } catch {
+      message = detailText
+    }
+    throw new Error(message || `Request failed: ${response.status}`)
   }
 
   if (response.status === 204) {

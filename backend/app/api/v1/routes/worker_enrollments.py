@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageFilter, ImageStat, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,6 +55,7 @@ async def upload_enrollment_image(
         with Image.open(BytesIO(content)) as image:
             image_format = image.format
             width, height = image.size
+            quality = _assess_image_quality(image, len(content))
     except (UnidentifiedImageError, OSError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image file") from exc
 
@@ -86,6 +87,8 @@ async def upload_enrollment_image(
             file_size=len(content),
             width=width,
             height=height,
+            quality_status=quality["status"],
+            quality_details_json=quality,
         )
         db.add(record)
     else:
@@ -97,6 +100,8 @@ async def upload_enrollment_image(
         record.file_size = len(content)
         record.width = width
         record.height = height
+        record.quality_status = quality["status"]
+        record.quality_details_json = quality
     db.commit()
     db.refresh(record)
     return _image_read(record)
@@ -158,6 +163,41 @@ def _image_read(image: WorkerEnrollmentImage) -> WorkerEnrollmentImageRead:
         file_size=image.file_size,
         width=image.width,
         height=image.height,
+        quality_status=image.quality_status,
+        quality_details=image.quality_details_json,
         updated_at=image.updated_at,
         image_url=f"/api/v1/workers/{image.worker_id}/enrollment-images/{image.view}/content",
     )
+
+
+def _assess_image_quality(image: Image.Image, file_size: int) -> dict[str, object]:
+    width, height = image.size
+    aspect_ratio = width / height
+    issues: list[str] = []
+
+    if width < 480 or height < 720:
+        issues.append("Use at least 480x720 for better identity matching.")
+    if height <= width:
+        issues.append("Use a portrait full-body photo.")
+    if aspect_ratio < 0.45 or aspect_ratio > 0.85:
+        issues.append("Frame the worker closer to a full-body 3:4 portrait.")
+    if file_size < 40_000:
+        issues.append("Image file is very small; check compression quality.")
+
+    grayscale = image.convert("L")
+    grayscale.thumbnail((360, 360))
+    edge_variance = ImageStat.Stat(grayscale.filter(ImageFilter.FIND_EDGES)).var[0]
+    if edge_variance < 35:
+        issues.append("Image may be blurry or low contrast.")
+
+    return {
+        "status": "good" if not issues else "review_needed",
+        "issues": issues,
+        "metrics": {
+            "width": width,
+            "height": height,
+            "aspect_ratio": round(aspect_ratio, 3),
+            "file_size": file_size,
+            "edge_variance": round(edge_variance, 2),
+        },
+    }

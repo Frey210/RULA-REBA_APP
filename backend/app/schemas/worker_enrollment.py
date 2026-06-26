@@ -15,5 +15,7 @@ class WorkerEnrollmentImageRead(BaseModel):
     file_size: int
     width: int
     height: int
+    quality_status: str
+    quality_details: dict[str, object]
     updated_at: datetime
     image_url: str

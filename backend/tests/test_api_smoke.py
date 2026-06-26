@@ -52,6 +52,59 @@ def test_auth_and_worker_scope(client: TestClient) -> None:
     assert client.get("/api/v1/workers", headers=auth_header(token_b)).json() == []
 
 
+def test_worker_status_and_delete_rules(client: TestClient, db_session: Session) -> None:
+    token = register_and_login(client, "worker-lifecycle@example.com")
+
+    worker = client.post(
+        "/api/v1/workers",
+        headers=auth_header(token),
+        json={"employee_number": "EMP-LIFE", "name": "Lifecycle Worker"},
+    ).json()
+
+    deactivated = client.patch(
+        f"/api/v1/workers/{worker['id']}",
+        headers=auth_header(token),
+        json={"is_active": False},
+    )
+    assert deactivated.status_code == 200
+    assert deactivated.json()["is_active"] is False
+
+    activated = client.patch(
+        f"/api/v1/workers/{worker['id']}",
+        headers=auth_header(token),
+        json={"is_active": True},
+    )
+    assert activated.status_code == 200
+    assert activated.json()["is_active"] is True
+
+    unused_worker = client.post(
+        "/api/v1/workers",
+        headers=auth_header(token),
+        json={"employee_number": "EMP-DELETE", "name": "Delete Me"},
+    ).json()
+    deleted = client.delete(f"/api/v1/workers/{unused_worker['id']}", headers=auth_header(token))
+    assert deleted.status_code == 204
+    worker_ids = {row["id"] for row in client.get("/api/v1/workers", headers=auth_header(token)).json()}
+    assert unused_worker["id"] not in worker_ids
+
+    session = client.post(
+        "/api/v1/sessions",
+        headers=auth_header(token),
+        json={"camera_node_ids": [], "notes": "Delete guard"},
+    ).json()
+    session_worker = SessionWorker(
+        session_id=session["id"],
+        worker_id=worker["id"],
+        edge_worker_id="REID_DELETE_GUARD",
+        identity_status="confirmed",
+    )
+    db_session.add(session_worker)
+    db_session.commit()
+
+    guarded_delete = client.delete(f"/api/v1/workers/{worker['id']}", headers=auth_header(token))
+    assert guarded_delete.status_code == 409
+
+
 def test_pairing_and_session_lifecycle(client: TestClient) -> None:
     token = register_and_login(client)
 
@@ -238,6 +291,8 @@ def test_worker_enrollment_images_are_private_and_replaceable(client: TestClient
     assert uploaded.status_code == 200
     assert uploaded.json()["view"] == "front"
     assert uploaded.json()["width"] == 480
+    assert uploaded.json()["quality_status"] in {"good", "review_needed"}
+    assert uploaded.json()["quality_details"]["metrics"]["width"] == 480
 
     hidden = client.get(
         f"/api/v1/workers/{worker['id']}/enrollment-images",
@@ -257,10 +312,12 @@ def test_worker_enrollment_images_are_private_and_replaceable(client: TestClient
     assert replaced.status_code == 200
     assert replaced.json()["id"] == uploaded.json()["id"]
     assert replaced.json()["width"] == 600
-    assert len(client.get(
+    listed = client.get(
         f"/api/v1/workers/{worker['id']}/enrollment-images",
         headers=auth_header(token_a),
-    ).json()) == 1
+    )
+    assert len(listed.json()) == 1
+    assert listed.json()[0]["quality_details"]["metrics"]["width"] == 600
 
     too_small = client.put(
         f"/api/v1/workers/{worker['id']}/enrollment-images/left",

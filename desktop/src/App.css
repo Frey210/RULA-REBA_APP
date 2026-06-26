@@ -77,6 +77,13 @@
   flex-wrap: wrap;
 }
 
+.workerActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .workerRegistryEntry {
   padding: 8px 0 18px;
   border-bottom: 1px solid #eef1f2;
@@ -103,6 +110,19 @@
 .enrollmentView {
   display: grid;
   gap: 8px;
+}
+
+.enrollmentViewHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.enrollmentIssues {
+  display: grid;
+  gap: 2px;
+  min-height: 34px;
 }
 
 .enrollmentPreview {

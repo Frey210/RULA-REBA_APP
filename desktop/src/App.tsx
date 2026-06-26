@@ -35,6 +35,7 @@ import {
   LogOut,
   Pencil,
   RadioReceiver,
+  RotateCcw,
   Save,
   Settings,
   ShieldCheck,
@@ -1006,14 +1007,39 @@ function WorkerRegistry({
     }
   }
 
-  async function deactivateWorker(workerId: string) {
+  async function setWorkerActive(workerId: string, isActive: boolean) {
     setLoading(true)
     try {
-      await apiRequest(`/api/v1/workers/${workerId}`, { method: 'DELETE' }, token)
+      await apiRequest<WorkerRecord>(
+        `/api/v1/workers/${workerId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ is_active: isActive }),
+        },
+        token,
+      )
       await refreshData()
-      setMessage('Worker deactivated.')
+      setMessage(isActive ? 'Worker activated.' : 'Worker deactivated.')
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Failed to deactivate worker.')
+      setMessage(err instanceof Error ? err.message : 'Failed to update worker status.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function deleteWorker(worker: WorkerRecord) {
+    const confirmed = window.confirm(
+      `Delete ${worker.name}? Workers with session history cannot be deleted and should be deactivated instead.`,
+    )
+    if (!confirmed) return
+
+    setLoading(true)
+    try {
+      await apiRequest(`/api/v1/workers/${worker.id}`, { method: 'DELETE' }, token)
+      await refreshData()
+      setMessage('Worker deleted.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to delete worker.')
     } finally {
       setLoading(false)
     }
@@ -1048,17 +1074,38 @@ function WorkerRegistry({
                 </Typography>
               </Box>
               <Chip size="small" label={worker.is_active ? 'active' : 'inactive'} color={worker.is_active ? 'success' : 'default'} />
-              {worker.is_active ? (
+              <Box className="workerActions">
+                {worker.is_active ? (
+                  <Button
+                    color="warning"
+                    size="small"
+                    startIcon={<X size={16} />}
+                    disabled={loading}
+                    onClick={() => void setWorkerActive(worker.id, false)}
+                  >
+                    Deactivate
+                  </Button>
+                ) : (
+                  <Button
+                    color="success"
+                    size="small"
+                    startIcon={<RotateCcw size={16} />}
+                    disabled={loading}
+                    onClick={() => void setWorkerActive(worker.id, true)}
+                  >
+                    Activate
+                  </Button>
+                )}
                 <Button
                   color="error"
                   size="small"
                   startIcon={<Trash2 size={16} />}
                   disabled={loading}
-                  onClick={() => void deactivateWorker(worker.id)}
+                  onClick={() => void deleteWorker(worker)}
                 >
-                  Deactivate
+                  Delete
                 </Button>
-              ) : null}
+              </Box>
             </Box>
             <WorkerEnrollmentGallery token={token} worker={worker} />
           </Box>
@@ -1160,41 +1207,75 @@ function WorkerEnrollmentGallery({ token, worker }: { token: string; worker: Wor
         <Chip size="small" label={`${images.length}/3 views`} color={images.length === 3 ? 'success' : 'default'} />
       </Box>
       <Box className="enrollmentGrid">
-        {enrollmentViews.map((view) => (
-          <Box key={view.key} className="enrollmentView">
-            <Box className="enrollmentPreview">
-              {imageUrls[view.key] ? (
-                <img src={imageUrls[view.key]} alt={`${worker.name} ${view.label}`} />
+        {enrollmentViews.map((view) => {
+          const record = images.find((image) => image.view === view.key)
+          const issues = record?.quality_details.issues ?? []
+          return (
+            <Box key={view.key} className="enrollmentView">
+              <Box className="enrollmentPreview">
+                {imageUrls[view.key] ? (
+                  <img src={imageUrls[view.key]} alt={`${worker.name} ${view.label}`} />
+                ) : (
+                  <UserRound size={34} />
+                )}
+              </Box>
+              <Box className="enrollmentViewHeader">
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>{view.label}</Typography>
+                {record ? (
+                  <Chip
+                    size="small"
+                    label={record.quality_status === 'good' ? 'Good' : 'Review'}
+                    color={record.quality_status === 'good' ? 'success' : 'warning'}
+                  />
+                ) : null}
+              </Box>
+              {record ? (
+                <Typography variant="caption" color="text.secondary">
+                  {record.width}x{record.height} - {formatFileSize(record.file_size)}
+                </Typography>
               ) : (
-                <UserRound size={34} />
+                <Typography variant="caption" color="text.secondary">No photo uploaded.</Typography>
               )}
-            </Box>
-            <Typography variant="body2" sx={{ fontWeight: 700 }}>{view.label}</Typography>
-            <Stack direction="row" spacing={1}>
-              <Button component="label" size="small" variant="outlined" disabled={loadingView === view.key}>
-                {imageUrls[view.key] ? 'Replace' : 'Upload'}
-                <input
-                  hidden
-                  type="file"
-                  accept="image/jpeg,image/png"
-                  onChange={(event) => {
-                    void upload(view.key, event.target.files?.[0])
-                    event.target.value = ''
-                  }}
-                />
-              </Button>
-              {imageUrls[view.key] ? (
-                <Button color="error" size="small" disabled={loadingView === view.key} onClick={() => void remove(view.key)}>
-                  Remove
-                </Button>
+              {issues.length ? (
+                <Box className="enrollmentIssues">
+                  {issues.slice(0, 2).map((issue) => (
+                    <Typography key={issue} variant="caption" color="text.secondary">{issue}</Typography>
+                  ))}
+                </Box>
               ) : null}
-            </Stack>
-          </Box>
-        ))}
+              <Stack direction="row" spacing={1}>
+                <Button component="label" size="small" variant="outlined" disabled={loadingView === view.key}>
+                  {imageUrls[view.key] ? 'Replace' : 'Upload'}
+                  <input
+                    hidden
+                    type="file"
+                    accept="image/jpeg,image/png"
+                    onChange={(event) => {
+                      void upload(view.key, event.target.files?.[0])
+                      event.target.value = ''
+                    }}
+                  />
+                </Button>
+                {imageUrls[view.key] ? (
+                  <Button color="error" size="small" disabled={loadingView === view.key} onClick={() => void remove(view.key)}>
+                    Remove
+                  </Button>
+                ) : null}
+              </Stack>
+            </Box>
+          )
+        })}
       </Box>
       {message ? <Typography variant="caption" color="text.secondary">{message}</Typography> : null}
     </Box>
   )
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function SettingsPage({

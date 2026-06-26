@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
@@ -16,3 +16,5 @@ class WorkerEnrollmentImage(UuidPrimaryKeyMixin, TimestampMixin, Base):
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
     width: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
+    quality_status: Mapped[str] = mapped_column(String(30), default="review_needed", nullable=False)
+    quality_details_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
