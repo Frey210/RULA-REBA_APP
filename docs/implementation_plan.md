@@ -1,5 +1,32 @@
 # Implementation Plan
 
+This document is the engineering gate plan. For product scope and feature priority, use:
+
+- `docs/mvp_scope.md` for the MVP feature boundary.
+- `docs/priority_roadmap.md` for implementation order.
+- `docs/future_features.md` for planned post-MVP features.
+
+## Current Product Direction
+
+The immediate product direction is a stable offline-first single-camera MVP:
+
+```text
+Raspberry Pi Edge -> Local FastAPI Backend -> Local Database -> Electron Desktop
+```
+
+Cloud sync, multi-camera, fleet management, licensing, and enterprise deployment are valid future directions, but they should not block the first usable MVP.
+
+The next engineering priorities are:
+
+1. Live Assessment productization.
+2. Worker identity and enrollment workflow.
+3. Provisional RULA/REBA scoring workflow.
+4. Event Engine.
+5. Worker Timeline and Session Review.
+6. Exposure Analytics.
+7. MVP Reports.
+8. Deployment hardening.
+
 ## Gate 0: Documentation and Inspection
 
 Status: in progress.
@@ -192,4 +219,3 @@ Acceptance criteria:
 ## Immediate Next Task After Approval
 
 Start Gate 1 by scaffolding the FastAPI backend and initial database migration in `RULA-REBA_APP`.
-
