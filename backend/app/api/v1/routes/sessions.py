@@ -16,7 +16,7 @@ from app.models.user import User
 from app.models.worker import Worker
 from app.schemas.ergonomic_event import ErgonomicEventRead
 from app.schemas.session import SessionCreate, SessionRead, SessionWorkerAssign, SessionWorkerRead
-from app.services.event_engine import resolve_active_events_for_session
+from app.services.event_engine import backfill_session_events, resolve_active_events_for_session
 from app.services.session_codes import create_session_code
 
 router = APIRouter()
@@ -123,6 +123,7 @@ def list_session_events(
     db: Annotated[DbSession, Depends(get_db)],
 ) -> list[ErgonomicEventRead]:
     session = _get_owned_session(session_id, current_user, db)
+    backfill_session_events(db, session)
     rows = db.execute(
         select(ErgonomicEvent, SessionWorker, Worker)
         .join(SessionWorker, ErgonomicEvent.session_worker_id == SessionWorker.id)

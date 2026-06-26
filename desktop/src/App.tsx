@@ -1601,7 +1601,12 @@ function SessionReview({ token, sessions }: { token: string; sessions: SessionRe
         }
       } catch (err) {
         if (!cancelled) {
-          setMessage(err instanceof Error ? err.message : 'Failed to load session events.')
+          const detail = err instanceof Error ? err.message : 'Failed to load session events.'
+          setMessage(
+            detail === 'Not Found'
+              ? 'The running backend does not support Session Review. Close all running app/backend processes, then start Electron again.'
+              : detail,
+          )
         }
       } finally {
         if (!cancelled) {

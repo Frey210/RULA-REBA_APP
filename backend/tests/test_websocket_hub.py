@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.detection import Detection
@@ -128,7 +128,8 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
                         "metadata": {
                             "model": "yolov8s_pose_h8",
                             "identity_status": "new",
-                            "reba": {"score": 9, "risk": "High"},
+                            "reba": {"score": 3, "risk": "Low"},
+                            "rula": {"score": 6, "risk": "High"},
                         },
                     }
                 ],
@@ -171,7 +172,8 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
     events = list(db_session.scalars(select(ErgonomicEvent).order_by(ErgonomicEvent.started_at)))
     assert [event.event_type for event in events] == ["worker_observed", "high_risk_posture"]
     assert events[1].status == "resolved"
-    assert events[1].score == 9
+    assert events[1].score_type == "rula"
+    assert events[1].score == 6
     assert events[1].duration_ms == 1000
 
     listed = client.get(
@@ -180,3 +182,20 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
     )
     assert listed.status_code == 200
     assert any(event["event_type"] == "high_risk_posture" for event in listed.json())
+
+    db_session.execute(delete(ErgonomicEvent))
+    db_session.commit()
+    rebuilt = client.get(
+        f"/api/v1/sessions/{session.json()['id']}/events",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert rebuilt.status_code == 200
+    rebuilt_events = rebuilt.json()
+    event_types = [event["event_type"] for event in rebuilt_events]
+    assert event_types.count("worker_observed") == 1
+    assert event_types.count("high_risk_posture") == 1
+    rebuilt_high_risk = next(
+        event for event in rebuilt_events if event["event_type"] == "high_risk_posture"
+    )
+    assert rebuilt_high_risk["status"] == "resolved"
+    assert rebuilt_high_risk["duration_ms"] == 1000

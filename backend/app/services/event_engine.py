@@ -75,6 +75,64 @@ def resolve_active_events_for_session(db: DbSession, session: Session, ended_at:
         _resolve_event(event, ended_at, event.last_detection_id)
 
 
+def backfill_session_events(db: DbSession, session: Session) -> int:
+    """Materialize events for detections recorded before the event engine existed."""
+    if db.scalar(
+        select(ErgonomicEvent.id).where(ErgonomicEvent.session_id == session.id).limit(1)
+    ) is not None:
+        return 0
+
+    cameras = {
+        camera.id: camera
+        for camera in db.scalars(
+            select(CameraNode).where(
+                CameraNode.id.in_(
+                    select(Detection.camera_node_id).where(Detection.session_id == session.id)
+                )
+            )
+        )
+    }
+    workers = {
+        worker.id: worker
+        for worker in db.scalars(
+            select(SessionWorker).where(SessionWorker.session_id == session.id)
+        )
+    }
+    rows = db.scalars(
+        select(Detection)
+        .where(Detection.session_id == session.id, Detection.session_worker_id.is_not(None))
+        .order_by(Detection.observed_at, Detection.frame_id)
+    )
+
+    processed = 0
+    for detection_row in rows:
+        camera = cameras.get(detection_row.camera_node_id)
+        session_worker = workers.get(detection_row.session_worker_id)
+        raw_detection = detection_row.raw_payload.get("detection", {})
+        if camera is None or session_worker is None or not isinstance(raw_detection, dict):
+            continue
+        try:
+            edge_detection = EdgeDetection.model_validate(raw_detection)
+        except ValueError:
+            continue
+        process_detection_for_events(
+            db,
+            session,
+            camera,
+            session_worker,
+            detection_row,
+            edge_detection,
+        )
+        db.flush()
+        processed += 1
+
+    if session.stopped_at:
+        resolve_active_events_for_session(db, session, session.stopped_at)
+    if processed:
+        db.commit()
+    return processed
+
+
 def _ensure_worker_observed_event(
     db: DbSession,
     session: Session,
@@ -134,10 +192,13 @@ def _resolve_event(event: ErgonomicEvent, ended_at: datetime, last_detection_id:
 
 
 def _assessment_from_detection(detection: EdgeDetection) -> dict[str, Any] | None:
-    for score_type in ("reba", "rula"):
-        assessment = _normalize_assessment(score_type, detection.metadata.get(score_type))
-        if assessment:
-            return assessment
+    assessments = [
+        assessment
+        for score_type in ("reba", "rula")
+        if (assessment := _normalize_assessment(score_type, detection.metadata.get(score_type)))
+    ]
+    if assessments:
+        return max(assessments, key=lambda item: item["severity_rank"])
 
     angles = detection.metadata.get("angles")
     if isinstance(angles, dict):

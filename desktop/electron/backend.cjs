@@ -10,7 +10,12 @@ let stopping = false
 
 async function main() {
   if (await isPortOpen(8000)) {
-    console.log('Backend already running at http://127.0.0.1:8000')
+    if (!(await hasRequiredApi())) {
+      console.error('An outdated or incompatible backend is already using http://127.0.0.1:8000.')
+      console.error('Stop that process, then run npm.cmd run electron again.')
+      process.exit(1)
+    }
+    console.log('Compatible backend already running at http://127.0.0.1:8000')
     keepAlive()
     return
   }
@@ -89,6 +94,17 @@ function isPortOpen(port) {
   })
 }
 
+async function hasRequiredApi() {
+  try {
+    const response = await fetch('http://127.0.0.1:8000/openapi.json')
+    if (!response.ok) return false
+    const schema = await response.json()
+    return Boolean(schema.paths?.['/api/v1/sessions/{session_id}/events'])
+  } catch {
+    return false
+  }
+}
+
 function keepAlive() {
   setInterval(() => {}, 60_000)
 }
@@ -101,7 +117,17 @@ function shutdown() {
     return
   }
 
-  child.kill()
+  const pid = child.pid
+  if (process.platform === 'win32' && pid) {
+    const killer = spawn('taskkill.exe', ['/pid', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    killer.once('exit', () => process.exit(0))
+    return
+  }
+
+  child.kill('SIGTERM')
   const timeout = setTimeout(() => child?.kill('SIGKILL'), 5_000)
   child.once('exit', () => {
     clearTimeout(timeout)
