@@ -91,6 +91,49 @@ export type ErgonomicEventRecord = {
   metadata_json: Record<string, unknown>
 }
 
+export type EventReviewRecord = {
+  id: string
+  assessment_type: 'rula' | 'reba'
+  assessment_status: string
+  provisional_score: number | null
+  provisional_risk_level: string | null
+  score: number
+  risk_level: string
+  manual_inputs: Record<string, number>
+  breakdown: Record<string, unknown>
+  notes: string | null
+  reviewed_by: string | null
+  calculated_at: string
+}
+
+export type EventSnapshotRecord = {
+  id: string
+  snapshot_type: string
+  captured_at: string
+  content_url: string
+  metadata: Record<string, unknown>
+}
+
+export type EventDetailRecord = {
+  id: string
+  angles: Record<string, number | null>
+  assessment_quality: {
+    status?: string
+    measured_components?: number
+    required_components?: number
+    limitations?: string[]
+    [key: string]: unknown
+  }
+  provisional_scores: Record<string, {
+    score?: number
+    risk?: string
+    risk_level?: string
+    breakdown?: Record<string, number>
+  }>
+  reviews: EventReviewRecord[]
+  snapshots: EventSnapshotRecord[]
+}
+
 export type WorkerEnrollmentImage = {
   id: string
   worker_id: string

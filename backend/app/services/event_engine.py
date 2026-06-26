@@ -23,36 +23,41 @@ def process_detection_for_events(
     session_worker: SessionWorker,
     detection_row: Detection,
     edge_detection: EdgeDetection,
-) -> None:
-    _ensure_worker_observed_event(db, session, camera, session_worker, detection_row, edge_detection)
+) -> list[ErgonomicEvent]:
+    created_events: list[ErgonomicEvent] = []
+    observed_event = _ensure_worker_observed_event(
+        db, session, camera, session_worker, detection_row, edge_detection
+    )
+    if observed_event:
+        created_events.append(observed_event)
 
     assessment = _assessment_from_detection(edge_detection)
     active_high_risk = _active_event(db, session_worker.id, HIGH_RISK_EVENT)
     if assessment is None or not assessment["is_high_risk"]:
         if active_high_risk:
             _resolve_event(active_high_risk, detection_row.observed_at, detection_row.id)
-        return
+        return created_events
 
     if active_high_risk is None:
-        db.add(
-            ErgonomicEvent(
-                session_id=session.id,
-                camera_node_id=camera.id,
-                session_worker_id=session_worker.id,
-                event_type=HIGH_RISK_EVENT,
-                status="active",
-                severity=assessment["severity"],
-                started_at=detection_row.observed_at,
-                score_type=assessment["score_type"],
-                score=assessment["score"],
-                risk_level=assessment["risk_level"],
-                source_detection_id=detection_row.id,
-                last_detection_id=detection_row.id,
-                confidence=edge_detection.confidence,
-                metadata_json={"assessment": assessment["raw"]},
-            )
+        event = ErgonomicEvent(
+            session_id=session.id,
+            camera_node_id=camera.id,
+            session_worker_id=session_worker.id,
+            event_type=HIGH_RISK_EVENT,
+            status="active",
+            severity=assessment["severity"],
+            started_at=detection_row.observed_at,
+            score_type=assessment["score_type"],
+            score=assessment["score"],
+            risk_level=assessment["risk_level"],
+            source_detection_id=detection_row.id,
+            last_detection_id=detection_row.id,
+            confidence=edge_detection.confidence,
+            metadata_json={"assessment": assessment["raw"]},
         )
-        return
+        db.add(event)
+        created_events.append(event)
+        return created_events
 
     active_high_risk.last_detection_id = detection_row.id
     active_high_risk.score_type = assessment["score_type"]
@@ -61,6 +66,7 @@ def process_detection_for_events(
     active_high_risk.severity = assessment["severity"]
     active_high_risk.confidence = edge_detection.confidence
     active_high_risk.metadata_json = {"assessment": assessment["raw"]}
+    return created_events
 
 
 def resolve_active_events_for_session(db: DbSession, session: Session, ended_at: datetime) -> None:
@@ -140,7 +146,7 @@ def _ensure_worker_observed_event(
     session_worker: SessionWorker,
     detection_row: Detection,
     edge_detection: EdgeDetection,
-) -> None:
+) -> ErgonomicEvent | None:
     existing = db.scalar(
         select(ErgonomicEvent.id)
         .where(
@@ -151,25 +157,25 @@ def _ensure_worker_observed_event(
         .limit(1)
     )
     if existing is not None:
-        return
+        return None
 
-    db.add(
-        ErgonomicEvent(
-            session_id=session.id,
-            camera_node_id=camera.id,
-            session_worker_id=session_worker.id,
-            event_type=WORKER_OBSERVED_EVENT,
-            status="resolved",
-            severity="info",
-            started_at=detection_row.observed_at,
-            ended_at=detection_row.observed_at,
-            duration_ms=0,
-            source_detection_id=detection_row.id,
-            last_detection_id=detection_row.id,
-            confidence=edge_detection.confidence,
-            metadata_json={"edge_worker_id": edge_detection.worker_id},
-        )
+    event = ErgonomicEvent(
+        session_id=session.id,
+        camera_node_id=camera.id,
+        session_worker_id=session_worker.id,
+        event_type=WORKER_OBSERVED_EVENT,
+        status="resolved",
+        severity="info",
+        started_at=detection_row.observed_at,
+        ended_at=detection_row.observed_at,
+        duration_ms=0,
+        source_detection_id=detection_row.id,
+        last_detection_id=detection_row.id,
+        confidence=edge_detection.confidence,
+        metadata_json={"edge_worker_id": edge_detection.worker_id},
     )
+    db.add(event)
+    return event
 
 
 def _active_event(db: DbSession, session_worker_id: str, event_type: str) -> ErgonomicEvent | None:

@@ -1,10 +1,17 @@
+from io import BytesIO
+
+import httpx
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app.models.activity import Activity
+from app.models.assessment import Assessment
 from app.models.detection import Detection
 from app.models.ergonomic_event import ErgonomicEvent
 from app.models.session_worker import SessionWorker
+from app.core.config import settings
 
 
 def get_token(client: TestClient) -> str:
@@ -79,7 +86,22 @@ def test_edge_rejects_cam_id_mismatch(client: TestClient) -> None:
 def test_edge_detection_is_persisted_for_known_session_and_camera(
     client: TestClient,
     db_session: Session,
+    monkeypatch,
+    tmp_path,
 ) -> None:
+    image_buffer = BytesIO()
+    Image.new("RGB", (640, 360), color=(20, 90, 84)).save(image_buffer, format="JPEG")
+
+    def snapshot_response(*_args, **_kwargs) -> httpx.Response:
+        return httpx.Response(
+            200,
+            content=image_buffer.getvalue(),
+            headers={"content-type": "image/jpeg"},
+            request=httpx.Request("GET", "http://edge.test/snapshot/latest"),
+        )
+
+    monkeypatch.setattr(settings, "media_root", tmp_path)
+    monkeypatch.setattr("app.services.snapshot_capture.httpx.get", snapshot_response)
     token = get_token(client)
     pairing = client.post("/api/v1/device-pairings", headers={"Authorization": f"Bearer {token}"})
     assert pairing.status_code == 201
@@ -90,7 +112,7 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
             "cam_id": "CAM_01",
             "hostname": "ergoquipt-rr",
             "device_type": "raspberry_pi_5_hailo8",
-            "metadata": {"hailort": "4.23.0"},
+            "metadata": {"hailort": "4.23.0", "edge_base_url": "http://edge.test"},
         },
     )
     assert complete.status_code == 200
@@ -182,7 +204,52 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
     )
     assert listed.status_code == 200
     assert any(event["event_type"] == "high_risk_posture" for event in listed.json())
+    high_risk_event = next(
+        event for event in listed.json() if event["event_type"] == "high_risk_posture"
+    )
+    detail = client.get(
+        f"/api/v1/sessions/{session.json()['id']}/events/{high_risk_event['id']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail.status_code == 200
+    assert detail.json()["provisional_scores"]["rula"]["score"] == 6
+    assert len(detail.json()["snapshots"]) == 1
+    snapshot_content = client.get(
+        detail.json()["snapshots"][0]["content_url"],
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert snapshot_content.status_code == 200
+    assert snapshot_content.headers["content-type"] == "image/jpeg"
 
+    reviewed = client.put(
+        f"/api/v1/sessions/{session.json()['id']}/events/{high_risk_event['id']}/reviews/reba",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "load_score": 2,
+            "coupling_score": 1,
+            "activity_score": 1,
+            "notes": "Load confirmed from the event evidence.",
+        },
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["assessment_status"] == "reviewed"
+    assert reviewed.json()["manual_inputs"] == {
+        "load_score": 2,
+        "coupling_score": 1,
+        "activity_score": 1,
+    }
+    assert reviewed.json()["provisional_score"] == 3
+    assert reviewed.json()["score"] >= reviewed.json()["provisional_score"]
+
+    invalid_rula = client.put(
+        f"/api/v1/sessions/{session.json()['id']}/events/{high_risk_event['id']}/reviews/rula",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"load_score": 0, "activity_score": 2, "wrist_twist_score": 1},
+    )
+    assert invalid_rula.status_code == 422
+
+    db_session.execute(delete(Assessment))
+    db_session.execute(delete(Activity))
     db_session.execute(delete(ErgonomicEvent))
     db_session.commit()
     rebuilt = client.get(

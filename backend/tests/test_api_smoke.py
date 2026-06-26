@@ -141,6 +141,12 @@ def test_pairing_and_session_lifecycle(client: TestClient) -> None:
     assert stop_response.status_code == 200
     assert stop_response.json()["status"] == "review_pending"
 
+    complete_response = client.post(
+        f"/api/v1/sessions/{session_id}/complete", headers=auth_header(token)
+    )
+    assert complete_response.status_code == 200
+    assert complete_response.json()["status"] == "completed"
+
 
 def test_camera_node_rename_and_delete_are_user_scoped(client: TestClient) -> None:
     token_a = register_and_login(client, "device-a@example.com")

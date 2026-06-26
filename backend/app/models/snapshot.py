@@ -12,6 +12,9 @@ class Snapshot(UuidPrimaryKeyMixin, Base):
 
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False, index=True)
     detection_id: Mapped[str | None] = mapped_column(ForeignKey("detections.id"))
+    ergonomic_event_id: Mapped[str | None] = mapped_column(
+        ForeignKey("ergonomic_events.id"), index=True
+    )
     camera_node_id: Mapped[str] = mapped_column(ForeignKey("camera_nodes.id"), nullable=False, index=True)
     session_worker_id: Mapped[str | None] = mapped_column(ForeignKey("session_workers.id"), index=True)
     snapshot_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -20,4 +23,3 @@ class Snapshot(UuidPrimaryKeyMixin, Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-

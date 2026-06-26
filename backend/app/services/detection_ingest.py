@@ -9,6 +9,7 @@ from app.models.session import Session
 from app.models.session_worker import SessionWorker
 from app.schemas.edge import EdgeDetectionEvent
 from app.services.event_engine import process_detection_for_events
+from app.services.snapshot_capture import capture_event_snapshot
 
 
 def persist_detection_event(db: DbSession, event: EdgeDetectionEvent) -> int:
@@ -67,7 +68,12 @@ def persist_detection_event(db: DbSession, event: EdgeDetectionEvent) -> int:
         )
         db.add(detection_row)
         db.flush()
-        process_detection_for_events(db, session, camera, session_worker, detection_row, detection)
+        created_events = process_detection_for_events(
+            db, session, camera, session_worker, detection_row, detection
+        )
+        db.flush()
+        for created_event in created_events:
+            capture_event_snapshot(db, session, camera, created_event)
         inserted += 1
 
     if inserted:

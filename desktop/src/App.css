@@ -84,6 +84,125 @@
   background: #fbfcfc;
 }
 
+.reviewWorkspace {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(520px, 1.4fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.timelinePane,
+.reviewDetailPane {
+  min-width: 0;
+  padding: 20px;
+}
+
+.timelinePane {
+  border-right: 1px solid #dde2e4;
+  max-height: 850px;
+  overflow-y: auto;
+}
+
+.eventRowButton {
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.eventRowButton:hover,
+.eventRowButton:focus-visible {
+  border-color: #7ca9a6;
+  outline: none;
+}
+
+.eventRowButton.selected {
+  border-color: #176d6a;
+  background: #edf7f6;
+  box-shadow: inset 3px 0 #176d6a;
+}
+
+.reviewDetailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evidenceGrid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1.1fr) minmax(280px, 0.9fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.snapshotEvidence {
+  display: grid;
+  gap: 8px;
+}
+
+.snapshotEvidence img,
+.snapshotPlaceholder {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid #dde2e4;
+  border-radius: 8px;
+  background: #12181b;
+}
+
+.snapshotEvidence img {
+  display: block;
+  object-fit: contain;
+}
+
+.snapshotPlaceholder {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  color: #879294;
+}
+
+.reviewValueGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.reviewValue {
+  min-width: 0;
+  padding: 9px 10px;
+  border-left: 2px solid #b8c7c6;
+  background: #f7f9f9;
+}
+
+.reviewValue p {
+  overflow-wrap: anywhere;
+}
+
+.assessmentSection {
+  display: grid;
+  gap: 16px;
+  padding-top: 4px;
+  border-top: 1px solid #e4e7e8;
+}
+
+.scoreComparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.scoreComparison > div {
+  padding-left: 12px;
+  border-left: 3px solid #176d6a;
+}
+
+.reviewFormGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
 .workerForm {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr)) auto;
@@ -346,6 +465,17 @@
 
   .liveGrid {
     grid-template-columns: 1fr;
+  }
+
+  .reviewWorkspace,
+  .evidenceGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .timelinePane {
+    max-height: 440px;
+    border-right: 0;
+    border-bottom: 1px solid #dde2e4;
   }
 
   .livePreview,

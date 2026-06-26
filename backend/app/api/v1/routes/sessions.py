@@ -116,6 +116,24 @@ def stop_session(
     return session
 
 
+@router.post("/{session_id}/complete", response_model=SessionRead)
+def complete_session(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> Session:
+    session = _get_owned_session(session_id, current_user, db)
+    if session.status != "review_pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a session pending review can be completed",
+        )
+    session.status = "completed"
+    db.commit()
+    db.refresh(session)
+    return session
+
+
 @router.get("/{session_id}/events", response_model=list[ErgonomicEventRead])
 def list_session_events(
     session_id: str,

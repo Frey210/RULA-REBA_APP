@@ -18,6 +18,8 @@ import {
   Paper,
   Stack,
   Switch,
+  Tab,
+  Tabs,
   TextField,
   ThemeProvider,
   Toolbar,
@@ -55,6 +57,8 @@ import type {
   AuthTokens,
   CameraNode,
   ErgonomicEventRecord,
+  EventDetailRecord,
+  EventReviewRecord,
   PairingToken,
   SessionRecord,
   SessionWorkerRecord,
@@ -340,7 +344,7 @@ function Page({
     return <Placeholder title="Reports" icon={FileText} />
   }
   if (activePage === 'review') {
-    return <SessionReview token={token} sessions={sessions} />
+    return <SessionReview token={token} sessions={sessions} refreshData={refreshData} />
   }
   return (
     <Dashboard
@@ -1568,11 +1572,42 @@ function inferBackendUrlFromEdge(edgeBaseUrl: string): string {
   return backendUrl
 }
 
-function SessionReview({ token, sessions }: { token: string; sessions: SessionRecord[] }) {
+type ReviewFormState = {
+  load_score: number
+  coupling_score: number
+  activity_score: number
+  wrist_twist_score: number
+  notes: string
+}
+
+const emptyReviewForm: ReviewFormState = {
+  load_score: 0,
+  coupling_score: 0,
+  activity_score: 0,
+  wrist_twist_score: 1,
+  notes: '',
+}
+
+function SessionReview({
+  token,
+  sessions,
+  refreshData,
+}: {
+  token: string
+  sessions: SessionRecord[]
+  refreshData: () => Promise<void>
+}) {
   const reviewSessions = sessions.filter((session) => ['running', 'review_pending', 'completed'].includes(session.status))
   const [selectedSessionId, setSelectedSessionId] = useState(reviewSessions[0]?.id ?? '')
   const [events, setEvents] = useState<ErgonomicEventRecord[]>([])
+  const [selectedEventId, setSelectedEventId] = useState('')
+  const [eventDetail, setEventDetail] = useState<EventDetailRecord | null>(null)
+  const [assessmentType, setAssessmentType] = useState<'reba' | 'rula'>('reba')
+  const [reviewForm, setReviewForm] = useState<ReviewFormState>(emptyReviewForm)
+  const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
   useEffect(() => {
@@ -1598,6 +1633,10 @@ function SessionReview({ token, sessions }: { token: string; sessions: SessionRe
         )
         if (!cancelled) {
           setEvents(rows)
+          setSelectedEventId((current) => {
+            if (rows.some((row) => row.id === current)) return current
+            return rows.find((row) => row.event_type === 'high_risk_posture')?.id ?? rows[0]?.id ?? ''
+          })
         }
       } catch (err) {
         if (!cancelled) {
@@ -1620,14 +1659,148 @@ function SessionReview({ token, sessions }: { token: string; sessions: SessionRe
     }
   }, [selectedSessionId, token])
 
+  useEffect(() => {
+    if (!selectedEventId) {
+      setEventDetail(null)
+      return
+    }
+    let cancelled = false
+    async function loadDetail() {
+      setDetailLoading(true)
+      try {
+        const detail = await apiRequest<EventDetailRecord>(
+          `/api/v1/sessions/${selectedSessionId}/events/${selectedEventId}`,
+          {},
+          token,
+        )
+        if (!cancelled) {
+          setEventDetail(detail)
+          setMessage(null)
+        }
+      } catch (err) {
+        if (!cancelled) setMessage(err instanceof Error ? err.message : 'Failed to load event detail.')
+      } finally {
+        if (!cancelled) setDetailLoading(false)
+      }
+    }
+    void loadDetail()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedEventId, selectedSessionId, token])
+
+  useEffect(() => {
+    const review = eventDetail?.reviews.find((row) => row.assessment_type === assessmentType)
+    setReviewForm(review ? formFromReview(review) : emptyReviewForm)
+  }, [assessmentType, eventDetail])
+
+  useEffect(() => {
+    const snapshot = eventDetail?.snapshots[0]
+    if (!snapshot) {
+      setSnapshotUrl(null)
+      return
+    }
+    let cancelled = false
+    void apiBlob(snapshot.content_url, token)
+      .then((blob) => {
+        if (!cancelled) setSnapshotUrl(URL.createObjectURL(blob))
+      })
+      .catch(() => {
+        if (!cancelled) setSnapshotUrl(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [eventDetail, token])
+
+  useEffect(() => () => {
+    if (snapshotUrl) URL.revokeObjectURL(snapshotUrl)
+  }, [snapshotUrl])
+
+  async function reloadEventDetail() {
+    if (!selectedEventId) return
+    const detail = await apiRequest<EventDetailRecord>(
+      `/api/v1/sessions/${selectedSessionId}/events/${selectedEventId}`,
+      {},
+      token,
+    )
+    setEventDetail(detail)
+  }
+
+  async function saveReview() {
+    if (!selectedEventId) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      await apiRequest(
+        `/api/v1/sessions/${selectedSessionId}/events/${selectedEventId}/reviews/${assessmentType}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(reviewForm),
+        },
+        token,
+      )
+      await reloadEventDetail()
+      setMessage(`${assessmentType.toUpperCase()} review saved.`)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to save review.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function captureSnapshot() {
+    if (!selectedEventId) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      await apiRequest(
+        `/api/v1/sessions/${selectedSessionId}/events/${selectedEventId}/snapshots`,
+        { method: 'POST' },
+        token,
+      )
+      await reloadEventDetail()
+      setMessage('Snapshot captured.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Snapshot capture failed.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function completeReview() {
+    if (!selectedSessionId) return
+    setSaving(true)
+    try {
+      await apiRequest(`/api/v1/sessions/${selectedSessionId}/complete`, { method: 'POST' }, token)
+      await refreshData()
+      setMessage('Session review completed.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to complete session review.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const selectedSession = sessions.find((session) => session.id === selectedSessionId)
+  const selectedEvent = events.find((event) => event.id === selectedEventId)
   const highRiskEvents = events.filter((event) => event.event_type === 'high_risk_posture')
   const exposureMs = highRiskEvents.reduce((total, event) => total + (event.duration_ms ?? 0), 0)
   const workerCount = new Set(events.map((event) => event.session_worker_id)).size
+  const currentReview = eventDetail?.reviews.find((row) => row.assessment_type === assessmentType)
+  const provisional = eventDetail?.provisional_scores[assessmentType]
+  const displayedBreakdown = currentReview?.breakdown ?? provisional?.breakdown ?? {}
 
   return (
     <Stack spacing={3}>
-      <PageTitle title="Session Review" action={null} />
+      <PageTitle
+        title="Session Review"
+        action={selectedSession?.status === 'review_pending' ? (
+          <Button variant="contained" startIcon={<ClipboardCheck size={18} />} disabled={saving} onClick={completeReview}>
+            Complete Review
+          </Button>
+        ) : null}
+      />
       <Paper className="panel" elevation={0}>
         <Box className="reviewHeader">
           <TextField
@@ -1659,41 +1832,210 @@ function SessionReview({ token, sessions }: { token: string; sessions: SessionRe
         <Metric label="Active Events" value={events.filter((event) => event.status === 'active').length} icon={Activity} />
         <Metric label="Exposure Minutes" value={Math.round(exposureMs / 60_000)} icon={BarChart3} />
       </Box>
-      <Paper className="panel" elevation={0}>
-        <Typography variant="h6">Event Timeline</Typography>
-        <Divider sx={{ my: 2 }} />
-        {events.length ? (
-          <Stack spacing={1.5}>
-            {events.map((event) => (
-              <Box key={event.id} className="eventRow">
-                <Box>
-                  <Typography sx={{ fontWeight: 700 }}>{eventLabel(event.event_type)}</Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {event.worker_name ?? event.edge_worker_id}
-                    {event.employee_number ? ` - ${event.employee_number}` : ''} - {formatDateTime(event.started_at)}
-                  </Typography>
-                </Box>
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  sx={{ alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}
+      <Paper className="panel reviewWorkspace" elevation={0}>
+        <Box className="timelinePane">
+          <Typography variant="h6">Event Timeline</Typography>
+          <Divider sx={{ my: 2 }} />
+          {events.length ? (
+            <Stack spacing={1}>
+              {events.map((event) => (
+                <Box
+                  key={event.id}
+                  className={`eventRow eventRowButton${event.id === selectedEventId ? ' selected' : ''}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedEventId(event.id)}
+                  onKeyDown={(keyEvent) => {
+                    if (keyEvent.key === 'Enter' || keyEvent.key === ' ') setSelectedEventId(event.id)
+                  }}
                 >
-                  <Chip size="small" label={event.status} color={event.status === 'active' ? 'warning' : 'default'} />
-                  <Chip size="small" label={event.severity} color={severityColor(event.severity)} />
-                  {event.score ? <Chip size="small" label={`${event.score_type?.toUpperCase()}: ${event.score}`} /> : null}
-                  <Typography variant="caption" color="text.secondary">
-                    {event.duration_ms !== null ? formatDuration(event.duration_ms) : 'active'}
-                  </Typography>
-                </Stack>
+                  <Box>
+                    <Typography sx={{ fontWeight: 700 }}>{eventLabel(event.event_type)}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {event.worker_name ?? event.edge_worker_id} - {formatDateTime(event.started_at)}
+                    </Typography>
+                  </Box>
+                  <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Chip size="small" label={event.severity} color={severityColor(event.severity)} />
+                    {event.score ? <Chip size="small" label={`${event.score_type?.toUpperCase()} ${event.score}`} /> : null}
+                    <Typography variant="caption" color="text.secondary">
+                      {event.duration_ms !== null ? formatDuration(event.duration_ms) : 'active'}
+                    </Typography>
+                  </Stack>
+                </Box>
+              ))}
+            </Stack>
+          ) : (
+            <Typography color="text.secondary">No events recorded for this session yet.</Typography>
+          )}
+        </Box>
+
+        <Box className="reviewDetailPane">
+          <Box className="reviewDetailHeader">
+            <Box>
+              <Typography variant="h6">Review Evidence</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {selectedEvent ? `${selectedEvent.worker_name ?? selectedEvent.edge_worker_id} - ${formatDateTime(selectedEvent.started_at)}` : 'No event selected'}
+              </Typography>
+            </Box>
+            {eventDetail?.assessment_quality.status ? (
+              <Chip size="small" label={`Pose ${eventDetail.assessment_quality.status}`} color={eventDetail.assessment_quality.status === 'good' ? 'success' : 'warning'} />
+            ) : null}
+          </Box>
+          <Divider sx={{ my: 2 }} />
+          {detailLoading ? <LinearProgress /> : null}
+          {selectedEvent && eventDetail ? (
+            <Stack spacing={2.5}>
+              <Box className="evidenceGrid">
+                <Box className="snapshotEvidence">
+                  {snapshotUrl ? <img src={snapshotUrl} alt="Event posture evidence" /> : (
+                    <Box className="snapshotPlaceholder">
+                      <Camera size={28} />
+                      <Typography variant="body2" color="text.secondary">No snapshot</Typography>
+                    </Box>
+                  )}
+                  <Button size="small" startIcon={<Camera size={16} />} disabled={saving} onClick={captureSnapshot}>
+                    {snapshotUrl ? 'Recapture' : 'Capture Snapshot'}
+                  </Button>
+                </Box>
+                <Box>
+                  <Typography variant="subtitle2" sx={{ mb: 1 }}>Pose Measurements</Typography>
+                  <Box className="reviewValueGrid">
+                    {Object.entries(eventDetail.angles).slice(0, 10).map(([name, value]) => (
+                      <Box key={name} className="reviewValue">
+                        <Typography variant="caption" color="text.secondary">{formatMetricName(name)}</Typography>
+                        <Typography sx={{ fontWeight: 700 }}>{typeof value === 'number' ? `${value.toFixed(1)} deg` : '-'}</Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                  {eventDetail.assessment_quality.limitations?.length ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                      {eventDetail.assessment_quality.limitations.map(formatMetricName).join(' - ')}
+                    </Typography>
+                  ) : null}
+                </Box>
               </Box>
-            ))}
-          </Stack>
-        ) : (
-          <Typography color="text.secondary">No events recorded for this session yet.</Typography>
-        )}
+
+              <Box className="assessmentSection">
+                <Tabs value={assessmentType} onChange={(_, value: 'reba' | 'rula') => setAssessmentType(value)}>
+                  <Tab value="reba" label="REBA" />
+                  <Tab value="rula" label="RULA" />
+                </Tabs>
+                <Box className="scoreComparison">
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Provisional</Typography>
+                    <Typography variant="h6">{provisional?.score ?? '-'}</Typography>
+                    <Typography variant="body2">{provisional?.risk_level ?? provisional?.risk ?? 'Not available'}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">Reviewed Final</Typography>
+                    <Typography variant="h6">{currentReview?.score ?? '-'}</Typography>
+                    <Typography variant="body2">{currentReview?.risk_level ?? 'Pending review'}</Typography>
+                  </Box>
+                </Box>
+
+                <Box className="reviewFormGrid">
+                  <TextField
+                    select
+                    label={assessmentType === 'reba' ? 'Load / Force' : 'Force / Load'}
+                    value={reviewForm.load_score}
+                    onChange={(event) => setReviewForm({ ...reviewForm, load_score: Number(event.target.value) })}
+                  >
+                    {(assessmentType === 'reba' ? rebaLoadOptions : rulaLoadOptions).map((option) => (
+                      <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                    ))}
+                  </TextField>
+                  {assessmentType === 'reba' ? (
+                    <TextField select label="Coupling" value={reviewForm.coupling_score} onChange={(event) => setReviewForm({ ...reviewForm, coupling_score: Number(event.target.value) })}>
+                      {couplingOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+                    </TextField>
+                  ) : (
+                    <TextField select label="Wrist Twist" value={reviewForm.wrist_twist_score} onChange={(event) => setReviewForm({ ...reviewForm, wrist_twist_score: Number(event.target.value) })}>
+                      {wristTwistOptions.map((option) => <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>)}
+                    </TextField>
+                  )}
+                  <TextField
+                    select
+                    label={assessmentType === 'reba' ? 'Activity' : 'Muscle Use'}
+                    value={reviewForm.activity_score}
+                    onChange={(event) => setReviewForm({ ...reviewForm, activity_score: Number(event.target.value) })}
+                  >
+                    {(assessmentType === 'reba' ? rebaActivityOptions : rulaActivityOptions).map((option) => (
+                      <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField label="Review Notes" value={reviewForm.notes} onChange={(event) => setReviewForm({ ...reviewForm, notes: event.target.value })} multiline minRows={2} />
+                </Box>
+                <Button variant="contained" startIcon={<Save size={17} />} disabled={saving} onClick={saveReview}>
+                  Save {assessmentType.toUpperCase()} Review
+                </Button>
+              </Box>
+
+              <Box>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>Score Breakdown</Typography>
+                <Box className="reviewValueGrid">
+                  {Object.entries(displayedBreakdown).filter(([, value]) => typeof value === 'number').map(([name, value]) => (
+                    <Box key={name} className="reviewValue">
+                      <Typography variant="caption" color="text.secondary">{formatMetricName(name)}</Typography>
+                      <Typography sx={{ fontWeight: 700 }}>{String(value)}</Typography>
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+            </Stack>
+          ) : (
+            <Typography color="text.secondary">Select an event from the timeline.</Typography>
+          )}
+        </Box>
       </Paper>
     </Stack>
   )
+}
+
+const rebaLoadOptions = [
+  { value: 0, label: '< 5 kg (+0)' },
+  { value: 1, label: '5-10 kg (+1)' },
+  { value: 2, label: '> 10 kg (+2)' },
+  { value: 3, label: '> 10 kg with shock / rapid force (+3)' },
+]
+const rulaLoadOptions = [
+  { value: 0, label: '< 2 kg, intermittent (+0)' },
+  { value: 1, label: '2-10 kg, intermittent (+1)' },
+  { value: 2, label: '2-10 kg, static or repeated (+2)' },
+  { value: 3, label: '> 10 kg or shock load (+3)' },
+]
+const couplingOptions = [
+  { value: 0, label: 'Good (+0)' },
+  { value: 1, label: 'Fair (+1)' },
+  { value: 2, label: 'Poor (+2)' },
+  { value: 3, label: 'Unacceptable (+3)' },
+]
+const rebaActivityOptions = [
+  { value: 0, label: 'Normal (+0)' },
+  { value: 1, label: 'Static, repeated, or rapid change (+1)' },
+  { value: 2, label: 'Multiple activity conditions (+2)' },
+]
+const rulaActivityOptions = [
+  { value: 0, label: 'Normal (+0)' },
+  { value: 1, label: 'Static or repeated (+1)' },
+]
+const wristTwistOptions = [
+  { value: 1, label: 'Mid-range (+1)' },
+  { value: 2, label: 'Near end-range (+2)' },
+]
+
+function formFromReview(review: EventReviewRecord): ReviewFormState {
+  return {
+    load_score: review.manual_inputs.load_score ?? 0,
+    coupling_score: review.manual_inputs.coupling_score ?? 0,
+    activity_score: review.manual_inputs.activity_score ?? 0,
+    wrist_twist_score: review.manual_inputs.wrist_twist_score ?? 1,
+    notes: review.notes ?? '',
+  }
+}
+
+function formatMetricName(value: string): string {
+  return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 function SessionList({ title, sessions }: { title: string; sessions: SessionRecord[] }) {
