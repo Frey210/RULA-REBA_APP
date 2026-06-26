@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.detection import Detection
+from app.models.ergonomic_event import ErgonomicEvent
 from app.models.session_worker import SessionWorker
 
 
@@ -124,7 +125,11 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
                                 {"id": 0, "name": "nose", "x": 231.0, "y": 96.0, "score": 0.86}
                             ],
                         },
-                        "metadata": {"model": "yolov8s_pose_h8", "identity_status": "new"},
+                        "metadata": {
+                            "model": "yolov8s_pose_h8",
+                            "identity_status": "new",
+                            "reba": {"score": 9, "risk": "High"},
+                        },
                     }
                 ],
             }
@@ -146,7 +151,7 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
                         "reid_confidence": 0.91,
                         "bbox": [124.0, 82.0, 418.0, 718.0],
                         "keypoints": {"format": "coco17", "points": []},
-                        "metadata": {"identity_status": "reacquired"},
+                        "metadata": {"identity_status": "reacquired", "reba": {"score": 3, "risk": "Low"}},
                     }
                 ],
             }
@@ -163,3 +168,15 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
     assert session_workers[0].tracking_id == 9
     assert session_workers[0].identity_status == "reacquired"
     assert all(detection.session_worker_id == session_workers[0].id for detection in detections)
+    events = list(db_session.scalars(select(ErgonomicEvent).order_by(ErgonomicEvent.started_at)))
+    assert [event.event_type for event in events] == ["worker_observed", "high_risk_posture"]
+    assert events[1].status == "resolved"
+    assert events[1].score == 9
+    assert events[1].duration_ms == 1000
+
+    listed = client.get(
+        f"/api/v1/sessions/{session.json()['id']}/events",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert listed.status_code == 200
+    assert any(event["event_type"] == "high_risk_posture" for event in listed.json())

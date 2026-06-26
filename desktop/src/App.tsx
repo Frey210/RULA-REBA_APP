@@ -54,6 +54,7 @@ import {
 import type {
   AuthTokens,
   CameraNode,
+  ErgonomicEventRecord,
   PairingToken,
   SessionRecord,
   SessionWorkerRecord,
@@ -339,7 +340,7 @@ function Page({
     return <Placeholder title="Reports" icon={FileText} />
   }
   if (activePage === 'review') {
-    return <Placeholder title="Session Review" icon={ClipboardCheck} />
+    return <SessionReview token={token} sessions={sessions} />
   }
   return (
     <Dashboard
@@ -931,6 +932,36 @@ function formatPercent(value?: number): string {
 
 function formatTimestamp(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+function formatDateTime(timestamp: string): string {
+  return new Date(timestamp).toLocaleString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    day: '2-digit',
+    month: 'short',
+  })
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 60_000) {
+    return `${Math.round(durationMs / 1000)}s`
+  }
+  return `${Math.round(durationMs / 60_000)}m`
+}
+
+function eventLabel(eventType: string): string {
+  if (eventType === 'high_risk_posture') return 'High Risk Posture'
+  if (eventType === 'worker_observed') return 'Worker Observed'
+  return eventType.replaceAll('_', ' ')
+}
+
+function severityColor(severity: string): 'default' | 'success' | 'warning' | 'error' {
+  if (severity === 'critical') return 'error'
+  if (severity === 'high') return 'warning'
+  if (severity === 'low') return 'success'
+  return 'default'
 }
 
 function findStreamCamera(
@@ -1535,6 +1566,129 @@ function inferBackendUrlFromEdge(edgeBaseUrl: string): string {
     return backendUrl
   }
   return backendUrl
+}
+
+function SessionReview({ token, sessions }: { token: string; sessions: SessionRecord[] }) {
+  const reviewSessions = sessions.filter((session) => ['running', 'review_pending', 'completed'].includes(session.status))
+  const [selectedSessionId, setSelectedSessionId] = useState(reviewSessions[0]?.id ?? '')
+  const [events, setEvents] = useState<ErgonomicEventRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!selectedSessionId && reviewSessions[0]?.id) {
+      setSelectedSessionId(reviewSessions[0].id)
+    }
+  }, [reviewSessions, selectedSessionId])
+
+  useEffect(() => {
+    if (!selectedSessionId) {
+      setEvents([])
+      return
+    }
+    let cancelled = false
+    async function loadEvents() {
+      setLoading(true)
+      setMessage(null)
+      try {
+        const rows = await apiRequest<ErgonomicEventRecord[]>(
+          `/api/v1/sessions/${selectedSessionId}/events`,
+          {},
+          token,
+        )
+        if (!cancelled) {
+          setEvents(rows)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setMessage(err instanceof Error ? err.message : 'Failed to load session events.')
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false)
+        }
+      }
+    }
+    void loadEvents()
+    return () => {
+      cancelled = true
+    }
+  }, [selectedSessionId, token])
+
+  const selectedSession = sessions.find((session) => session.id === selectedSessionId)
+  const highRiskEvents = events.filter((event) => event.event_type === 'high_risk_posture')
+  const exposureMs = highRiskEvents.reduce((total, event) => total + (event.duration_ms ?? 0), 0)
+  const workerCount = new Set(events.map((event) => event.session_worker_id)).size
+
+  return (
+    <Stack spacing={3}>
+      <PageTitle title="Session Review" action={null} />
+      <Paper className="panel" elevation={0}>
+        <Box className="reviewHeader">
+          <TextField
+            select
+            label="Session"
+            value={selectedSessionId}
+            onChange={(event) => setSelectedSessionId(event.target.value)}
+            sx={{ minWidth: 280 }}
+          >
+            {reviewSessions.map((session) => (
+              <MenuItem key={session.id} value={session.id}>
+                {session.session_code} - {session.status}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Box sx={{ flex: 1 }}>
+            <Typography sx={{ fontWeight: 700 }}>{selectedSession?.notes || selectedSession?.session_code || 'No session selected'}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              {selectedSession ? `${selectedSession.status} - ${selectedSession.started_at ? formatDateTime(selectedSession.started_at) : 'not started'}` : 'Start or stop a session to review events.'}
+            </Typography>
+          </Box>
+        </Box>
+        {loading ? <LinearProgress sx={{ mt: 2 }} /> : null}
+        {message ? <Alert severity="info" sx={{ mt: 2 }}>{message}</Alert> : null}
+      </Paper>
+      <Box className="metricGrid">
+        <Metric label="Workers Observed" value={workerCount} icon={UserRound} />
+        <Metric label="High Risk Events" value={highRiskEvents.length} icon={ShieldCheck} />
+        <Metric label="Active Events" value={events.filter((event) => event.status === 'active').length} icon={Activity} />
+        <Metric label="Exposure Minutes" value={Math.round(exposureMs / 60_000)} icon={BarChart3} />
+      </Box>
+      <Paper className="panel" elevation={0}>
+        <Typography variant="h6">Event Timeline</Typography>
+        <Divider sx={{ my: 2 }} />
+        {events.length ? (
+          <Stack spacing={1.5}>
+            {events.map((event) => (
+              <Box key={event.id} className="eventRow">
+                <Box>
+                  <Typography sx={{ fontWeight: 700 }}>{eventLabel(event.event_type)}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {event.worker_name ?? event.edge_worker_id}
+                    {event.employee_number ? ` - ${event.employee_number}` : ''} - {formatDateTime(event.started_at)}
+                  </Typography>
+                </Box>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  sx={{ alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}
+                >
+                  <Chip size="small" label={event.status} color={event.status === 'active' ? 'warning' : 'default'} />
+                  <Chip size="small" label={event.severity} color={severityColor(event.severity)} />
+                  {event.score ? <Chip size="small" label={`${event.score_type?.toUpperCase()}: ${event.score}`} /> : null}
+                  <Typography variant="caption" color="text.secondary">
+                    {event.duration_ms !== null ? formatDuration(event.duration_ms) : 'active'}
+                  </Typography>
+                </Stack>
+              </Box>
+            ))}
+          </Stack>
+        ) : (
+          <Typography color="text.secondary">No events recorded for this session yet.</Typography>
+        )}
+      </Paper>
+    </Stack>
+  )
 }
 
 function SessionList({ title, sessions }: { title: string; sessions: SessionRecord[] }) {

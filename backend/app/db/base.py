@@ -6,6 +6,7 @@ from app.models import (  # noqa: F401
     Detection,
     DevicePairing,
     EdgeEvent,
+    ErgonomicEvent,
     RefreshToken,
     Report,
     ReviewItem,

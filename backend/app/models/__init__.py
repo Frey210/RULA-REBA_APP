@@ -4,6 +4,7 @@ from app.models.camera_node import CameraNode
 from app.models.detection import Detection
 from app.models.device_pairing import DevicePairing
 from app.models.edge_event import EdgeEvent
+from app.models.ergonomic_event import ErgonomicEvent
 from app.models.refresh_token import RefreshToken
 from app.models.report import Report
 from app.models.review_item import ReviewItem
@@ -21,6 +22,7 @@ __all__ = [
     "Detection",
     "DevicePairing",
     "EdgeEvent",
+    "ErgonomicEvent",
     "RefreshToken",
     "Report",
     "ReviewItem",

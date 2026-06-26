@@ -9,11 +9,14 @@ from sqlalchemy.orm import Session as DbSession
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.camera_node import CameraNode
+from app.models.ergonomic_event import ErgonomicEvent
 from app.models.session import Session
 from app.models.session_worker import SessionWorker
 from app.models.user import User
 from app.models.worker import Worker
+from app.schemas.ergonomic_event import ErgonomicEventRead
 from app.schemas.session import SessionCreate, SessionRead, SessionWorkerAssign, SessionWorkerRead
+from app.services.event_engine import resolve_active_events_for_session
 from app.services.session_codes import create_session_code
 
 router = APIRouter()
@@ -100,8 +103,10 @@ def stop_session(
     if session.status != "running":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not running")
     edge_results = _stop_edges_for_session(session, current_user, db)
+    stopped_at = datetime.now(UTC)
+    resolve_active_events_for_session(db, session, stopped_at)
     session.status = "review_pending"
-    session.stopped_at = datetime.now(UTC)
+    session.stopped_at = stopped_at
     session.metadata_json = {
         **(session.metadata_json or {}),
         "edge_stop_results": edge_results,
@@ -109,6 +114,23 @@ def stop_session(
     db.commit()
     db.refresh(session)
     return session
+
+
+@router.get("/{session_id}/events", response_model=list[ErgonomicEventRead])
+def list_session_events(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> list[ErgonomicEventRead]:
+    session = _get_owned_session(session_id, current_user, db)
+    rows = db.execute(
+        select(ErgonomicEvent, SessionWorker, Worker)
+        .join(SessionWorker, ErgonomicEvent.session_worker_id == SessionWorker.id)
+        .outerjoin(Worker, SessionWorker.worker_id == Worker.id)
+        .where(ErgonomicEvent.session_id == session.id)
+        .order_by(ErgonomicEvent.started_at.desc(), ErgonomicEvent.created_at.desc())
+    ).all()
+    return [_event_read(event, session_worker, worker) for event, session_worker, worker in rows]
 
 
 @router.get("/{session_id}/workers", response_model=list[SessionWorkerRead])
@@ -173,6 +195,34 @@ def _session_worker_read(session_worker: SessionWorker, worker: Worker | None) -
         identity_status=session_worker.identity_status,
         reid_confidence=session_worker.reid_confidence,
         confirmed_at=session_worker.confirmed_at,
+    )
+
+
+def _event_read(
+    event: ErgonomicEvent,
+    session_worker: SessionWorker,
+    worker: Worker | None,
+) -> ErgonomicEventRead:
+    return ErgonomicEventRead(
+        id=event.id,
+        session_id=event.session_id,
+        camera_node_id=event.camera_node_id,
+        session_worker_id=event.session_worker_id,
+        worker_id=session_worker.worker_id,
+        worker_name=worker.name if worker else None,
+        employee_number=worker.employee_number if worker else None,
+        edge_worker_id=session_worker.edge_worker_id,
+        event_type=event.event_type,
+        status=event.status,
+        severity=event.severity,
+        started_at=event.started_at,
+        ended_at=event.ended_at,
+        duration_ms=event.duration_ms,
+        score_type=event.score_type,
+        score=event.score,
+        risk_level=event.risk_level,
+        confidence=event.confidence,
+        metadata_json=event.metadata_json,
     )
 
 

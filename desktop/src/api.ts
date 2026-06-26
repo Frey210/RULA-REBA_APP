@@ -69,6 +69,28 @@ export type SessionWorkerRecord = {
   confirmed_at: string | null
 }
 
+export type ErgonomicEventRecord = {
+  id: string
+  session_id: string
+  camera_node_id: string
+  session_worker_id: string
+  worker_id: string | null
+  worker_name: string | null
+  employee_number: string | null
+  edge_worker_id: string
+  event_type: string
+  status: string
+  severity: string
+  started_at: string
+  ended_at: string | null
+  duration_ms: number | null
+  score_type: string | null
+  score: number | null
+  risk_level: string | null
+  confidence: number | null
+  metadata_json: Record<string, unknown>
+}
+
 export type WorkerEnrollmentImage = {
   id: string
   worker_id: string

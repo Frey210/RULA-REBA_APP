@@ -8,6 +8,7 @@ from app.models.detection import Detection
 from app.models.session import Session
 from app.models.session_worker import SessionWorker
 from app.schemas.edge import EdgeDetectionEvent
+from app.services.event_engine import process_detection_for_events
 
 
 def persist_detection_event(db: DbSession, event: EdgeDetectionEvent) -> int:
@@ -44,28 +45,29 @@ def persist_detection_event(db: DbSession, event: EdgeDetectionEvent) -> int:
                 session_worker.identity_status = identity_status
             session_worker.reid_confidence = detection.reid_confidence
 
-        db.add(
-            Detection(
-                session_id=session.id,
-                camera_node_id=camera.id,
-                session_worker_id=session_worker.id,
-                schema_version=event.schema_version,
-                frame_id=event.frame_id,
-                timestamp_ms=event.timestamp,
-                observed_at=observed_at,
-                edge_worker_id=detection.worker_id,
-                tracking_id=detection.tracking_id,
-                confidence=detection.confidence,
-                reid_confidence=detection.reid_confidence,
-                bbox=detection.bbox,
-                keypoints=detection.keypoints.model_dump(),
-                angles=detection.metadata.get("angles"),
-                raw_payload={
-                    "event": event.model_dump(),
-                    "detection": detection.model_dump(),
-                },
-            )
+        detection_row = Detection(
+            session_id=session.id,
+            camera_node_id=camera.id,
+            session_worker_id=session_worker.id,
+            schema_version=event.schema_version,
+            frame_id=event.frame_id,
+            timestamp_ms=event.timestamp,
+            observed_at=observed_at,
+            edge_worker_id=detection.worker_id,
+            tracking_id=detection.tracking_id,
+            confidence=detection.confidence,
+            reid_confidence=detection.reid_confidence,
+            bbox=detection.bbox,
+            keypoints=detection.keypoints.model_dump(),
+            angles=detection.metadata.get("angles"),
+            raw_payload={
+                "event": event.model_dump(),
+                "detection": detection.model_dump(),
+            },
         )
+        db.add(detection_row)
+        db.flush()
+        process_detection_for_events(db, session, camera, session_worker, detection_row, detection)
         inserted += 1
 
     if inserted:
