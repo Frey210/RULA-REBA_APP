@@ -110,6 +110,8 @@ Exit criteria:
 
 ## Priority 6 - Exposure Analytics
 
+Status: baseline implemented with period overview, worker/session ranking, daily trends, worst events, and average/peak RULA-REBA.
+
 Goal: menghasilkan insight yang bernilai untuk HSE dan supervisor.
 
 Work items:
@@ -158,4 +160,3 @@ Exit criteria:
 
 - User does not need to run `npm`, `python`, or `uvicorn` manually for normal use.
 - Application can start after Windows reboot.
-

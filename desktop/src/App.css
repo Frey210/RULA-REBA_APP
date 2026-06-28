@@ -41,6 +41,75 @@
   gap: 16px;
 }
 
+.analyticsTitleBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 6px;
+}
+
+.analyticsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.analyticsRow {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid #eef1f2;
+}
+
+.analyticsRow:last-child {
+  border-bottom: 0;
+}
+
+.analyticsRank {
+  width: 24px;
+  flex: 0 0 24px;
+  text-align: center;
+  font-weight: 700;
+  color: #526463;
+}
+
+.analyticsValue {
+  min-width: 104px;
+  margin-left: auto;
+  text-align: right;
+}
+
+.trendList {
+  display: grid;
+  gap: 12px;
+}
+
+.trendRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.trendTrack {
+  height: 12px;
+  min-width: 120px;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #e6eceb;
+}
+
+.trendBar {
+  height: 100%;
+  border-radius: 3px;
+  background: #176d6a;
+}
+
 .inlineTitle,
 .pageTitle,
 .rowFlex {
@@ -493,6 +562,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .analyticsGrid {
+    grid-template-columns: 1fr;
+  }
+
   .liveGrid {
     grid-template-columns: 1fr;
   }
@@ -523,5 +596,20 @@
 
   .workerForm {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .trendRow {
+    flex-wrap: wrap;
+  }
+
+  .trendTrack {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .analyticsValue {
+    min-width: 86px;
   }
 }

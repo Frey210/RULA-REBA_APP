@@ -323,6 +323,21 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert reviewed_summary.json()["reviewed_event_count"] == 1
+    analytics = client.get(
+        "/api/v1/analytics/overview?days=30",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert analytics.status_code == 200
+    overview = analytics.json()
+    assert overview["session_count"] == 1
+    assert overview["worker_count"] == 1
+    assert overview["high_risk_event_count"] == 1
+    assert overview["high_risk_duration_ms"] == 12000
+    assert overview["reviewed_assessment_count"] == 1
+    assert overview["rula"] == {"average": 6.0, "peak": 6, "samples": 2}
+    assert overview["top_workers"][0]["worker_name"] == "WORKER_E47A"
+    assert overview["top_sessions"][0]["session_id"] == session.json()["id"]
+    assert overview["worst_events"][0]["reviewed"] is True
 
     invalid_rula = client.put(
         f"/api/v1/sessions/{session.json()['id']}/events/{high_risk_event['id']}/reviews/rula",

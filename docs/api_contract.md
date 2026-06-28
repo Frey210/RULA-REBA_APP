@@ -437,6 +437,14 @@ GET /api/v1/sessions/{session_id}/summary
 
 Returns session and per-worker event counts, high-risk duration, sustained-risk count, review progress, detection count, and average/peak RULA and REBA scores.
 
+## Exposure Analytics
+
+```text
+GET /api/v1/analytics/overview?days=7
+```
+
+`days` accepts `1` through `365`. The response contains cross-session exposure totals, average/peak RULA and REBA, highest-exposure workers, highest-risk sessions, daily trends, and worst posture events for the authenticated user.
+
 ### Get session detail
 
 ```text

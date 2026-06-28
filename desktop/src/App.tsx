@@ -64,6 +64,7 @@ import type {
   ErgonomicEventRecord,
   EventDetailRecord,
   EventReviewRecord,
+  ExposureOverviewRecord,
   PairingToken,
   SessionRecord,
   SessionExposureSummaryRecord,
@@ -504,6 +505,40 @@ function Dashboard({
 }) {
   const running = sessions.filter((session) => session.status === 'running').length
   const paired = cameraNodes.length
+  const [analyticsDays, setAnalyticsDays] = useState(7)
+  const [analytics, setAnalytics] = useState<ExposureOverviewRecord | null>(null)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null)
+
+  const loadAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true)
+    setAnalyticsError(null)
+    try {
+      const overview = await apiRequest<ExposureOverviewRecord>(
+        `/api/v1/analytics/overview?days=${analyticsDays}`,
+        {},
+        token,
+      )
+      setAnalytics(overview)
+    } catch (err) {
+      setAnalyticsError(err instanceof Error ? err.message : 'Failed to load exposure analytics.')
+    } finally {
+      setAnalyticsLoading(false)
+    }
+  }, [analyticsDays, token])
+
+  useEffect(() => {
+    void loadAnalytics()
+  }, [loadAnalytics])
+
+  async function refreshDashboard() {
+    await Promise.all([refreshData(), loadAnalytics()])
+  }
+
+  const maxDailyExposure = Math.max(
+    1,
+    ...(analytics?.daily_trend.map((day) => day.high_risk_duration_ms) ?? []),
+  )
 
   return (
     <Stack spacing={3}>
@@ -514,7 +549,7 @@ function Dashboard({
             <Button variant="contained" startIcon={<Camera size={18} />} onClick={openDevices}>
               Add Edge Camera
             </Button>
-            <Button onClick={refreshData}>Refresh</Button>
+            <Button onClick={refreshDashboard}>Refresh</Button>
           </Stack>
         }
       />
@@ -524,10 +559,125 @@ function Dashboard({
         <Metric label="Review Queue" value={sessions.filter((s) => s.status === 'review_pending').length} icon={ClipboardCheck} />
         <Metric label="Reports" value={0} icon={BarChart3} />
       </Box>
+      <Box className="analyticsTitleBar">
+        <Box>
+          <Typography variant="h6">Exposure Analytics</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {analytics?.session_count ?? 0} sessions in the selected period
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          <Chip size="small" label={`Avg RULA ${analytics?.rula.average ?? '-'}`} />
+          <Chip size="small" label={`Peak RULA ${analytics?.rula.peak ?? '-'}`} />
+          <Chip size="small" label={`Avg REBA ${analytics?.reba.average ?? '-'}`} />
+          <Chip size="small" label={`Peak REBA ${analytics?.reba.peak ?? '-'}`} />
+          <TextField
+            select
+            size="small"
+            label="Period"
+            value={analyticsDays}
+            onChange={(event) => setAnalyticsDays(Number(event.target.value))}
+            sx={{ width: 120 }}
+          >
+            <MenuItem value={7}>7 days</MenuItem>
+            <MenuItem value={30}>30 days</MenuItem>
+            <MenuItem value={90}>90 days</MenuItem>
+          </TextField>
+        </Stack>
+      </Box>
+      {analyticsLoading ? <LinearProgress /> : null}
+      {analyticsError ? <Alert severity="error">{analyticsError}</Alert> : null}
+      <Box className="metricGrid">
+        <Metric label="Observed Workers" value={analytics?.worker_count ?? 0} icon={UserRound} />
+        <Metric label="High Risk Events" value={analytics?.high_risk_event_count ?? 0} icon={ShieldCheck} />
+        <Metric label="Exposure Minutes" value={Math.round((analytics?.high_risk_duration_ms ?? 0) / 60_000)} icon={Activity} />
+        <Metric label="Reviewed Assessments" value={analytics?.reviewed_assessment_count ?? 0} icon={ClipboardCheck} />
+      </Box>
+      <Box className="analyticsGrid">
+        <Paper className="panel" elevation={0}>
+          <Typography variant="h6">Highest Exposure Workers</Typography>
+          <Divider sx={{ my: 2 }} />
+          {analytics?.top_workers.length ? analytics.top_workers.map((worker, index) => (
+            <Box key={worker.worker_key} className="analyticsRow">
+              <Typography className="analyticsRank">{index + 1}</Typography>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography sx={{ fontWeight: 700 }}>{worker.worker_name}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {worker.session_count} sessions - {worker.high_risk_event_count} high-risk events
+                </Typography>
+              </Box>
+              <Box className="analyticsValue">
+                <Typography sx={{ fontWeight: 700 }}>{formatDuration(worker.high_risk_duration_ms)}</Typography>
+                <Typography variant="caption" color="text.secondary">R {worker.rula.peak ?? '-'} / REBA {worker.reba.peak ?? '-'}</Typography>
+              </Box>
+            </Box>
+          )) : <Typography color="text.secondary">No worker exposure data.</Typography>}
+        </Paper>
+        <Paper className="panel" elevation={0}>
+          <Typography variant="h6">Highest Risk Sessions</Typography>
+          <Divider sx={{ my: 2 }} />
+          {analytics?.top_sessions.length ? analytics.top_sessions.map((session, index) => (
+            <Box key={session.session_id} className="analyticsRow">
+              <Typography className="analyticsRank">{index + 1}</Typography>
+              <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Typography sx={{ fontWeight: 700 }}>{session.notes || session.session_code}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {session.worker_count} workers - {session.high_risk_event_count} high-risk events
+                </Typography>
+              </Box>
+              <Box className="analyticsValue">
+                <Typography sx={{ fontWeight: 700 }}>{formatDuration(session.high_risk_duration_ms)}</Typography>
+                <Typography variant="caption" color="text.secondary">R {session.peak_rula ?? '-'} / REBA {session.peak_reba ?? '-'}</Typography>
+              </Box>
+            </Box>
+          )) : <Typography color="text.secondary">No session risk data.</Typography>}
+        </Paper>
+      </Box>
+      <Paper className="panel" elevation={0}>
+        <Typography variant="h6">Daily Exposure Trend</Typography>
+        <Divider sx={{ my: 2 }} />
+        {analytics?.daily_trend.length ? (
+          <Box className="trendList">
+            {analytics.daily_trend.map((day) => (
+              <Box key={day.day} className="trendRow">
+                <Typography variant="body2" sx={{ width: 92 }}>{formatAnalyticsDay(day.day)}</Typography>
+                <Box className="trendTrack">
+                  <Box className="trendBar" sx={{ width: `${Math.max(2, day.high_risk_duration_ms / maxDailyExposure * 100)}%` }} />
+                </Box>
+                <Typography variant="body2" sx={{ minWidth: 72, textAlign: 'right' }}>{formatDuration(day.high_risk_duration_ms)}</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ minWidth: 110 }}>
+                  {day.high_risk_event_count} events
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+        ) : <Typography color="text.secondary">No daily exposure data.</Typography>}
+      </Paper>
+      <Paper className="panel" elevation={0}>
+        <Typography variant="h6">Worst Posture Events</Typography>
+        <Divider sx={{ my: 2 }} />
+        {analytics?.worst_events.length ? analytics.worst_events.map((event) => (
+          <Box key={event.event_id} className="analyticsRow">
+            <ShieldCheck size={18} />
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Typography sx={{ fontWeight: 700 }}>{event.worker_name} - {event.session_code}</Typography>
+              <Typography variant="caption" color="text.secondary">{formatDateTime(event.started_at)}</Typography>
+            </Box>
+            <Chip size="small" label={event.severity} color={severityColor(event.severity)} />
+            {event.score !== null ? <Chip size="small" label={`${event.score_type?.toUpperCase()} ${event.score}`} /> : null}
+            <Chip size="small" label={event.reviewed ? 'reviewed' : 'pending'} color={event.reviewed ? 'success' : 'default'} />
+            <Typography variant="body2" sx={{ minWidth: 56, textAlign: 'right' }}>{formatDuration(event.duration_ms)}</Typography>
+          </Box>
+        )) : <Typography color="text.secondary">No high-risk posture events.</Typography>}
+      </Paper>
       <DeviceTable cameraNodes={cameraNodes} />
       <SessionList title="Recent Sessions" sessions={sessions.slice(0, 5)} token={token} refreshData={refreshData} />
     </Stack>
   )
+}
+
+function formatAnalyticsDay(value: string): string {
+  return new Date(`${value}T00:00:00`).toLocaleDateString([], { day: '2-digit', month: 'short' })
 }
 
 type LiveDetectionEvent = {

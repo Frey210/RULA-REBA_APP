@@ -126,6 +126,75 @@ export type SessionExposureSummaryRecord = {
   workers: WorkerExposureSummaryRecord[]
 }
 
+export type RiskWorkerRecord = {
+  worker_key: string
+  worker_id: string | null
+  worker_name: string
+  employee_number: string | null
+  session_count: number
+  high_risk_event_count: number
+  high_risk_duration_ms: number
+  sustained_event_count: number
+  rula: ScoreAggregateRecord
+  reba: ScoreAggregateRecord
+}
+
+export type RiskSessionRecord = {
+  session_id: string
+  session_code: string
+  notes: string | null
+  status: string
+  started_at: string | null
+  worker_count: number
+  high_risk_event_count: number
+  high_risk_duration_ms: number
+  peak_rula: number | null
+  peak_reba: number | null
+}
+
+export type DailyExposureRecord = {
+  day: string
+  session_count: number
+  worker_count: number
+  high_risk_event_count: number
+  high_risk_duration_ms: number
+  peak_rula: number | null
+  peak_reba: number | null
+}
+
+export type WorstEventRecord = {
+  event_id: string
+  session_id: string
+  session_code: string
+  session_worker_id: string
+  worker_name: string
+  event_type: string
+  started_at: string
+  duration_ms: number
+  score_type: string | null
+  score: number | null
+  risk_level: string | null
+  severity: string
+  reviewed: boolean
+}
+
+export type ExposureOverviewRecord = {
+  period_days: number
+  session_count: number
+  completed_session_count: number
+  worker_count: number
+  high_risk_event_count: number
+  sustained_event_count: number
+  high_risk_duration_ms: number
+  reviewed_assessment_count: number
+  rula: ScoreAggregateRecord
+  reba: ScoreAggregateRecord
+  top_workers: RiskWorkerRecord[]
+  top_sessions: RiskSessionRecord[]
+  daily_trend: DailyExposureRecord[]
+  worst_events: WorstEventRecord[]
+}
+
 export type EventReviewRecord = {
   id: string
   assessment_type: 'rula' | 'reba'
