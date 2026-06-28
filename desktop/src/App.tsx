@@ -1,14 +1,17 @@
-/* eslint-disable react-hooks/immutability, react-hooks/set-state-in-effect */
+/* eslint-disable react-hooks/set-state-in-effect */
 import {
   Alert,
   AppBar,
   Box,
   Button,
+  Checkbox,
   Chip,
   CssBaseline,
   Divider,
   Drawer,
   FormControlLabel,
+  IconButton,
+  InputAdornment,
   LinearProgress,
   List,
   ListItemButton,
@@ -33,6 +36,8 @@ import {
   ClipboardCheck,
   FileText,
   History,
+  Eye,
+  EyeOff,
   LayoutDashboard,
   LogOut,
   Pencil,
@@ -69,6 +74,26 @@ import type { DiscoveredDevice } from './types'
 
 const drawerWidth = 248
 const backendUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
+const tokenStorageKey = 'ergoquipt.tokens'
+
+function readStoredTokens(): AuthTokens | null {
+  const raw = localStorage.getItem(tokenStorageKey) ?? sessionStorage.getItem(tokenStorageKey)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as AuthTokens
+  } catch {
+    localStorage.removeItem(tokenStorageKey)
+    sessionStorage.removeItem(tokenStorageKey)
+    return null
+  }
+}
+
+function storeTokens(tokens: AuthTokens, persistent: boolean) {
+  localStorage.removeItem(tokenStorageKey)
+  sessionStorage.removeItem(tokenStorageKey)
+  const storage = persistent ? localStorage : sessionStorage
+  storage.setItem(tokenStorageKey, JSON.stringify(tokens))
+}
 
 const navItems = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -101,9 +126,10 @@ const theme = createTheme({
 
 function App() {
   const [tokens, setTokens] = useState<AuthTokens | null>(() => {
-    const raw = localStorage.getItem('ergoquipt.tokens')
-    return raw ? (JSON.parse(raw) as AuthTokens) : null
+    return readStoredTokens()
   })
+  const [keepLoggedIn, setKeepLoggedIn] = useState(() => Boolean(localStorage.getItem(tokenStorageKey)))
+  const [authReady, setAuthReady] = useState(tokens === null)
   const [activePage, setActivePage] = useState('dashboard')
   const [cameraNodes, setCameraNodes] = useState<CameraNode[]>([])
   const [sessions, setSessions] = useState<SessionRecord[]>([])
@@ -118,7 +144,7 @@ function App() {
   }, [])
 
   const refreshData = useCallback(async () => {
-    if (!token) return
+    if (!token || !authReady) return
     try {
       const [nodes, sessionRows, workerRows] = await Promise.all([
         apiRequest<CameraNode[]>('/api/v1/camera-nodes', {}, token),
@@ -132,13 +158,42 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
     }
-  }, [token])
+  }, [authReady, token])
 
   useEffect(() => {
-    if (token) {
+    if (!tokens || authReady) return
+    let cancelled = false
+    async function restoreAuthentication() {
+      try {
+        await apiRequest('/api/v1/auth/me', {}, tokens?.access_token)
+        if (!cancelled) setAuthReady(true)
+      } catch {
+        try {
+          const refreshed = await apiRequest<AuthTokens>('/api/v1/auth/refresh', {
+            method: 'POST',
+            body: JSON.stringify({ refresh_token: tokens?.refresh_token }),
+          })
+          if (!cancelled) {
+            storeTokens(refreshed, keepLoggedIn)
+            setTokens(refreshed)
+            setAuthReady(true)
+          }
+        } catch {
+          if (!cancelled) logout()
+        }
+      }
+    }
+    void restoreAuthentication()
+    return () => {
+      cancelled = true
+    }
+  }, [authReady, keepLoggedIn, tokens])
+
+  useEffect(() => {
+    if (token && authReady) {
       void refreshData()
     }
-  }, [token, refreshData])
+  }, [authReady, token, refreshData])
 
   async function refreshBackendStatus() {
     try {
@@ -149,14 +204,18 @@ function App() {
     }
   }
 
-  function handleLogin(nextTokens: AuthTokens) {
-    localStorage.setItem('ergoquipt.tokens', JSON.stringify(nextTokens))
+  function handleLogin(nextTokens: AuthTokens, persistent: boolean) {
+    storeTokens(nextTokens, persistent)
+    setKeepLoggedIn(persistent)
     setTokens(nextTokens)
+    setAuthReady(true)
   }
 
   function logout() {
-    localStorage.removeItem('ergoquipt.tokens')
+    localStorage.removeItem(tokenStorageKey)
+    sessionStorage.removeItem(tokenStorageKey)
     setTokens(null)
+    setAuthReady(true)
     setCameraNodes([])
     setSessions([])
     setWorkers([])
@@ -167,6 +226,15 @@ function App() {
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <LoginScreen onLogin={handleLogin} backendStatus={backendStatus} />
+      </ThemeProvider>
+    )
+  }
+
+  if (!authReady) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box className="loginPage"><Box sx={{ width: 280 }}><LinearProgress /></Box></Box>
       </ThemeProvider>
     )
   }
@@ -242,37 +310,63 @@ function LoginScreen({
   onLogin,
   backendStatus,
 }: {
-  onLogin: (tokens: AuthTokens) => void
+  onLogin: (tokens: AuthTokens, keepLoggedIn: boolean) => void
   backendStatus: string
 }) {
-  const [email, setEmail] = useState('operator@example.com')
-  const [password, setPassword] = useState('strong-password')
+  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
+  const [fullName, setFullName] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [keepLoggedIn, setKeepLoggedIn] = useState(false)
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function submit(event: FormEvent) {
     event.preventDefault()
+    if (mode === 'register' && password !== confirmPassword) return
     setLoading(true)
     setError(null)
     try {
       if (mode === 'register') {
         await apiRequest('/api/v1/auth/register', {
           method: 'POST',
-          body: JSON.stringify({ email, password, full_name: 'HSE Operator' }),
+          body: JSON.stringify({ email, username, full_name: fullName, password }),
         })
       }
       const tokens = await apiRequest<AuthTokens>('/api/v1/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       })
-      onLogin(tokens)
+      onLogin(tokens, keepLoggedIn)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed')
     } finally {
       setLoading(false)
     }
   }
+
+  const passwordsMismatch = mode === 'register' && confirmPassword.length > 0 && password !== confirmPassword
+
+  function switchMode() {
+    setMode(mode === 'login' ? 'register' : 'login')
+    setError(null)
+    setConfirmPassword('')
+  }
+
+  const passwordAdornment = (
+    <InputAdornment position="end">
+      <IconButton
+        edge="end"
+        aria-label={showPassword ? 'Hide password' : 'Show password'}
+        onClick={() => setShowPassword((visible) => !visible)}
+      >
+        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+      </IconButton>
+    </InputAdornment>
+  )
 
   return (
     <Box className="loginPage">
@@ -289,19 +383,56 @@ function LoginScreen({
           {error ? <Alert severity="error">{error}</Alert> : null}
           <Box component="form" onSubmit={submit}>
             <Stack spacing={2}>
-              <TextField label="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <TextField
+                label="Email"
+                type="email"
+                required
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              {mode === 'register' ? (
+                <>
+                  <TextField label="Username" required autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
+                  <TextField label="Full Name" required autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+                </>
+              ) : null}
               <TextField
                 label="Password"
-                type="password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                slotProps={{ input: { endAdornment: passwordAdornment } }}
+              />
+              {mode === 'register' ? (
+                <TextField
+                  label="Confirm Password"
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  error={passwordsMismatch}
+                  helperText={passwordsMismatch ? 'Passwords do not match' : confirmPassword && password === confirmPassword ? 'Passwords match' : ' '}
+                  slotProps={{ input: { endAdornment: passwordAdornment } }}
+                />
+              ) : null}
+              <FormControlLabel
+                control={<Checkbox checked={keepLoggedIn} onChange={(event) => setKeepLoggedIn(event.target.checked)} />}
+                label="Keep me logged in"
               />
               {loading ? <LinearProgress /> : null}
-              <Button type="submit" variant="contained" disabled={loading}>
-                {mode === 'login' ? 'Login' : 'Create account'}
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={loading || (mode === 'register' && (!username.trim() || !fullName.trim() || !confirmPassword || passwordsMismatch))}
+              >
+                {mode === 'login' ? 'Login' : 'Create User Account'}
               </Button>
-              <Button onClick={() => setMode(mode === 'login' ? 'register' : 'login')}>
-                {mode === 'login' ? 'Create first user' : 'Use existing user'}
+              <Button onClick={switchMode}>
+                {mode === 'login' ? 'Sign Up' : 'Back to Login'}
               </Button>
             </Stack>
           </Box>
@@ -335,7 +466,7 @@ function Page({
     return <SettingsPage token={token} cameraNodes={cameraNodes} refreshData={refreshData} />
   }
   if (activePage === 'history') {
-    return <SessionList title="History" sessions={sessions} />
+    return <SessionList title="History" sessions={sessions} token={token} refreshData={refreshData} />
   }
   if (activePage === 'workers') {
     return <WorkerRegistry token={token} workers={workers} refreshData={refreshData} />
@@ -348,6 +479,7 @@ function Page({
   }
   return (
     <Dashboard
+      token={token}
       cameraNodes={cameraNodes}
       sessions={sessions}
       refreshData={refreshData}
@@ -357,11 +489,13 @@ function Page({
 }
 
 function Dashboard({
+  token,
   cameraNodes,
   sessions,
   refreshData,
   openDevices,
 }: {
+  token: string
   cameraNodes: CameraNode[]
   sessions: SessionRecord[]
   refreshData: () => Promise<void>
@@ -390,7 +524,7 @@ function Dashboard({
         <Metric label="Reports" value={0} icon={BarChart3} />
       </Box>
       <DeviceTable cameraNodes={cameraNodes} />
-      <SessionList title="Recent Sessions" sessions={sessions.slice(0, 5)} />
+      <SessionList title="Recent Sessions" sessions={sessions.slice(0, 5)} token={token} refreshData={refreshData} />
     </Stack>
   )
 }
@@ -1782,6 +1916,28 @@ function SessionReview({
     }
   }
 
+  async function deleteSelectedSession() {
+    if (!selectedSession || selectedSession.status === 'running') return
+    const confirmed = window.confirm(
+      `Delete ${selectedSession.session_code} and all of its detections, reviews, and snapshots?`,
+    )
+    if (!confirmed) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      await apiRequest<void>(`/api/v1/sessions/${selectedSession.id}`, { method: 'DELETE' }, token)
+      setSelectedSessionId('')
+      setSelectedEventId('')
+      setEvents([])
+      setEventDetail(null)
+      await refreshData()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to delete session.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const selectedSession = sessions.find((session) => session.id === selectedSessionId)
   const selectedEvent = events.find((event) => event.id === selectedEventId)
   const highRiskEvents = events.filter((event) => event.event_type === 'high_risk_posture')
@@ -1795,10 +1951,23 @@ function SessionReview({
     <Stack spacing={3}>
       <PageTitle
         title="Session Review"
-        action={selectedSession?.status === 'review_pending' ? (
-          <Button variant="contained" startIcon={<ClipboardCheck size={18} />} disabled={saving} onClick={completeReview}>
-            Complete Review
-          </Button>
+        action={selectedSession ? (
+          <Stack direction="row" spacing={1}>
+            {selectedSession.status === 'review_pending' ? (
+              <Button variant="contained" startIcon={<ClipboardCheck size={18} />} disabled={saving} onClick={completeReview}>
+                Complete Review
+              </Button>
+            ) : null}
+            <Button
+              color="error"
+              variant="outlined"
+              startIcon={<Trash2 size={17} />}
+              disabled={saving || selectedSession.status === 'running'}
+              onClick={deleteSelectedSession}
+            >
+              Delete Session
+            </Button>
+          </Stack>
         ) : null}
       />
       <Paper className="panel" elevation={0}>
@@ -2038,17 +2207,58 @@ function formatMetricName(value: string): string {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
-function SessionList({ title, sessions }: { title: string; sessions: SessionRecord[] }) {
+function SessionList({
+  title,
+  sessions,
+  token,
+  refreshData,
+}: {
+  title: string
+  sessions: SessionRecord[]
+  token: string
+  refreshData: () => Promise<void>
+}) {
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function deleteSession(session: SessionRecord) {
+    if (session.status === 'running') return
+    const confirmed = window.confirm(
+      `Delete ${session.session_code} and all of its detections, reviews, and snapshots?`,
+    )
+    if (!confirmed) return
+    setDeletingId(session.id)
+    setMessage(null)
+    try {
+      await apiRequest<void>(`/api/v1/sessions/${session.id}`, { method: 'DELETE' }, token)
+      await refreshData()
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to delete session.')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
   return (
     <Paper className="panel" elevation={0}>
       <Typography variant="h6">{title}</Typography>
       <Divider sx={{ my: 2 }} />
+      {message ? <Alert severity="error" sx={{ mb: 2 }}>{message}</Alert> : null}
       {sessions.length ? (
         sessions.map((session) => (
-          <Box key={session.id} className="rowLine rowFlex">
+          <Box key={session.id} className="rowLine rowFlex" sx={{ flexWrap: 'wrap' }}>
             <Typography sx={{ minWidth: 220 }}>{session.session_code}</Typography>
             <Chip size="small" label={session.status} />
-            <Typography color="text.secondary">{session.notes ?? ''}</Typography>
+            <Typography color="text.secondary" sx={{ flex: 1 }}>{session.notes ?? ''}</Typography>
+            <Button
+              color="error"
+              size="small"
+              startIcon={<Trash2 size={15} />}
+              disabled={session.status === 'running' || deletingId === session.id}
+              onClick={() => void deleteSession(session)}
+            >
+              Delete
+            </Button>
           </Box>
         ))
       ) : (

@@ -1,17 +1,25 @@
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session as DbSession
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
+from app.models.activity import Activity
+from app.models.assessment import Assessment
 from app.models.camera_node import CameraNode
+from app.models.detection import Detection
 from app.models.ergonomic_event import ErgonomicEvent
+from app.models.report import Report
+from app.models.review_item import ReviewItem
 from app.models.session import Session
 from app.models.session_worker import SessionWorker
+from app.models.snapshot import Snapshot
 from app.models.user import User
 from app.models.worker import Worker
 from app.schemas.ergonomic_event import ErgonomicEventRead
@@ -68,6 +76,47 @@ def list_sessions(
             .order_by(Session.created_at.desc())
         )
     )
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_session(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> Response:
+    session = _get_owned_session(session_id, current_user, db)
+    if session.status == "running":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Stop the running session before deleting it",
+        )
+
+    snapshots = list(db.scalars(select(Snapshot).where(Snapshot.session_id == session.id)))
+    reports = list(db.scalars(select(Report).where(Report.session_id == session.id)))
+    media_paths = [
+        path
+        for path in (
+            *(snapshot.file_path for snapshot in snapshots),
+            *(snapshot.thumbnail_path for snapshot in snapshots),
+            *(report.file_path for report in reports),
+        )
+        if path
+    ]
+
+    db.execute(sql_delete(Assessment).where(Assessment.session_id == session.id))
+    db.execute(sql_delete(Snapshot).where(Snapshot.session_id == session.id))
+    db.execute(sql_delete(Activity).where(Activity.session_id == session.id))
+    db.execute(sql_delete(ReviewItem).where(ReviewItem.session_id == session.id))
+    db.execute(sql_delete(ErgonomicEvent).where(ErgonomicEvent.session_id == session.id))
+    db.execute(sql_delete(Detection).where(Detection.session_id == session.id))
+    db.execute(sql_delete(Report).where(Report.session_id == session.id))
+    db.execute(sql_delete(SessionWorker).where(SessionWorker.session_id == session.id))
+    db.delete(session)
+    db.commit()
+
+    for media_path in media_paths:
+        _remove_media_file(media_path)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{session_id}/start", response_model=SessionRead)
@@ -319,3 +368,15 @@ def _session_cameras(session: Session, current_user: User, db: DbSession) -> lis
             )
         )
     )
+
+
+def _remove_media_file(file_path: str) -> None:
+    path = Path(file_path)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        return
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass

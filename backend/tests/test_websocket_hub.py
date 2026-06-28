@@ -1,4 +1,5 @@
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 from fastapi.testclient import TestClient
@@ -10,14 +11,21 @@ from app.models.activity import Activity
 from app.models.assessment import Assessment
 from app.models.detection import Detection
 from app.models.ergonomic_event import ErgonomicEvent
+from app.models.session import Session as AssessmentSession
 from app.models.session_worker import SessionWorker
+from app.models.snapshot import Snapshot
 from app.core.config import settings
 
 
 def get_token(client: TestClient) -> str:
     response = client.post(
         "/api/v1/auth/register",
-        json={"email": "ws@example.com", "password": "strong-password", "full_name": "WS User"},
+        json={
+            "email": "ws@example.com",
+            "username": "ws-user",
+            "password": "strong-password",
+            "full_name": "WS User",
+        },
     )
     assert response.status_code == 201
     response = client.post(
@@ -266,3 +274,17 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
     )
     assert rebuilt_high_risk["status"] == "resolved"
     assert rebuilt_high_risk["duration_ms"] == 1000
+
+    snapshot_paths = [snapshot.file_path for snapshot in db_session.scalars(select(Snapshot))]
+    deleted = client.delete(
+        f"/api/v1/sessions/{session.json()['id']}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert deleted.status_code == 204
+    db_session.expire_all()
+    assert db_session.get(AssessmentSession, session.json()["id"]) is None
+    assert list(db_session.scalars(select(Detection))) == []
+    assert list(db_session.scalars(select(SessionWorker))) == []
+    assert list(db_session.scalars(select(ErgonomicEvent))) == []
+    assert list(db_session.scalars(select(Snapshot))) == []
+    assert all(not Path(path).exists() for path in snapshot_paths)

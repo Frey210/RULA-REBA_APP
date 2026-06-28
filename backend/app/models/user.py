@@ -9,6 +9,7 @@ class User(UuidPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "users"
 
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -17,4 +18,3 @@ class User(UuidPrimaryKeyMixin, TimestampMixin, Base):
     workers = relationship("Worker", back_populates="owner")
     sessions = relationship("Session", back_populates="owner")
     camera_nodes = relationship("CameraNode", back_populates="owner")
-

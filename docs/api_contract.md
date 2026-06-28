@@ -188,7 +188,7 @@ Response:
 
 ## Auth
 
-### Register first user
+### Register user
 
 ```text
 POST /api/v1/auth/register
@@ -199,6 +199,7 @@ Request:
 ```json
 {
   "email": "operator@example.com",
+  "username": "operator",
   "password": "change-me",
   "full_name": "HSE Operator"
 }
@@ -228,6 +229,22 @@ Response:
   "token_type": "bearer"
 }
 ```
+
+### Refresh login
+
+```text
+POST /api/v1/auth/refresh
+```
+
+Request:
+
+```json
+{
+  "refresh_token": "opaque-refresh-token"
+}
+```
+
+The refresh token is rotated after each successful exchange and cannot be reused.
 
 ### Current user
 
@@ -403,6 +420,14 @@ Response:
   "review_items_created": 8
 }
 ```
+
+### Delete session
+
+```text
+DELETE /api/v1/sessions/{session_id}
+```
+
+Running sessions must be stopped first. Deletion removes the session's detections, ergonomic events, reviews, assessments, snapshots, reports, worker links, and stored media files.
 
 ### Get session detail
 

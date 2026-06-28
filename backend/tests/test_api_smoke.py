@@ -1,16 +1,28 @@
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
 from fastapi.testclient import TestClient
 from PIL import Image
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.security import hash_password
+from app.models.refresh_token import RefreshToken
 from app.models.session_worker import SessionWorker
+from app.models.user import User
 
 
 def register_and_login(client: TestClient, email: str = "operator@example.com") -> str:
+    username_base = email.split("@", 1)[0]
+    username = username_base if len(username_base) >= 3 else f"{username_base}-user"
     response = client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": "strong-password", "full_name": "Operator"},
+        json={
+            "email": email,
+            "username": username,
+            "password": "strong-password",
+            "full_name": "Operator",
+        },
     )
     assert response.status_code == 201
 
@@ -35,6 +47,52 @@ def jpeg_image(width: int = 480, height: int = 720) -> bytes:
 def test_health_and_version(client: TestClient) -> None:
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get("/api/v1/version").json()["api_version"] == "1.0"
+
+
+def test_refresh_token_rotation(client: TestClient, db_session: Session) -> None:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "persistent@example.com",
+            "username": "persistent-user",
+            "password": "strong-password",
+            "full_name": "Persistent User",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["username"] == "persistent-user"
+    login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "persistent@example.com", "password": "strong-password"},
+    ).json()
+    refreshed = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": login["refresh_token"]},
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["refresh_token"] != login["refresh_token"]
+    reused = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": login["refresh_token"]},
+    )
+    assert reused.status_code == 401
+
+    user = db_session.scalar(select(User).where(User.email == "persistent@example.com"))
+    assert user is not None
+    legacy_token = "legacy-refresh-token-for-upgrade"
+    db_session.add(
+        RefreshToken(
+            user_id=user.id,
+            token_hash=hash_password(legacy_token),
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+    )
+    db_session.commit()
+    legacy_refresh = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": legacy_token},
+    )
+    assert legacy_refresh.status_code == 200
 
 
 def test_auth_and_worker_scope(client: TestClient) -> None:
@@ -136,6 +194,8 @@ def test_pairing_and_session_lifecycle(client: TestClient) -> None:
     start_response = client.post(f"/api/v1/sessions/{session_id}/start", headers=auth_header(token))
     assert start_response.status_code == 200
     assert start_response.json()["status"] == "running"
+    running_delete = client.delete(f"/api/v1/sessions/{session_id}", headers=auth_header(token))
+    assert running_delete.status_code == 409
 
     stop_response = client.post(f"/api/v1/sessions/{session_id}/stop", headers=auth_header(token))
     assert stop_response.status_code == 200
