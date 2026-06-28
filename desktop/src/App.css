@@ -102,12 +102,27 @@
   border-right: 1px solid #dde2e4;
   max-height: 850px;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .timelineFilters {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.timelineFilters > .MuiFormControl-root {
+  width: 100%;
+  min-width: 0;
+}
+
+.timelineFilters .MuiInputBase-root,
+.timelineFilters .MuiSelect-select {
+  min-width: 0;
+}
+
+.timelineSort {
+  grid-column: 1 / -1;
 }
 
 .identityReviewBar {

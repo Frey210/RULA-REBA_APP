@@ -2112,25 +2112,31 @@ function SessionReview({
             <Chip size="small" label={`${filteredEvents.length} of ${events.length}`} />
           </Box>
           <Divider sx={{ my: 2 }} />
-          <Box className="timelineFilters">
-            <TextField select size="small" label="Worker" value={workerFilter} onChange={(event) => setWorkerFilter(event.target.value)}>
+          <Box
+            className="timelineFilters"
+            sx={{
+              display: 'grid',
+              gridTemplateColumns: { xs: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
+            }}
+          >
+            <TextField select size="small" label="Worker" value={workerFilter} onChange={(event) => setWorkerFilter(event.target.value)} sx={{ minWidth: 0, width: '100%' }}>
               <MenuItem value="all">All workers</MenuItem>
               {workerOptions.map(([id, label]) => <MenuItem key={id} value={id}>{label}</MenuItem>)}
             </TextField>
-            <TextField select size="small" label="Event" value={eventTypeFilter} onChange={(event) => setEventTypeFilter(event.target.value)}>
+            <TextField select size="small" label="Event" value={eventTypeFilter} onChange={(event) => setEventTypeFilter(event.target.value)} sx={{ minWidth: 0, width: '100%' }}>
               <MenuItem value="all">All events</MenuItem>
               {eventTypeOptions.map((type) => <MenuItem key={type} value={type}>{eventLabel(type)}</MenuItem>)}
             </TextField>
-            <TextField select size="small" label="Severity" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}>
+            <TextField select size="small" label="Severity" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} sx={{ minWidth: 0, width: '100%' }}>
               <MenuItem value="all">All severity</MenuItem>
               {severityOptions.map((severity) => <MenuItem key={severity} value={severity}>{formatMetricName(severity)}</MenuItem>)}
             </TextField>
-            <TextField select size="small" label="Review" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)}>
+            <TextField select size="small" label="Review" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)} sx={{ minWidth: 0, width: '100%' }}>
               <MenuItem value="all">All status</MenuItem>
               <MenuItem value="pending">Pending</MenuItem>
               <MenuItem value="reviewed">Reviewed</MenuItem>
             </TextField>
-            <TextField select size="small" label="Sort" value={sortMode} onChange={(event) => setSortMode(event.target.value as 'time' | 'risk')}>
+            <TextField className="timelineSort" select size="small" label="Sort" value={sortMode} onChange={(event) => setSortMode(event.target.value as 'time' | 'risk')} sx={{ minWidth: 0, width: '100%', gridColumn: '1 / -1' }}>
               <MenuItem value="time">Latest first</MenuItem>
               <MenuItem value="risk">Worst first</MenuItem>
             </TextField>
