@@ -23,4 +23,4 @@ class ErgonomicEventRead(BaseModel):
     risk_level: str | None
     confidence: float | None
     metadata_json: dict
-
+    reviewed_assessment_types: list[str]

@@ -8,7 +8,7 @@ from app.models.detection import Detection
 from app.models.session import Session
 from app.models.session_worker import SessionWorker
 from app.schemas.edge import EdgeDetectionEvent
-from app.services.event_engine import process_detection_for_events
+from app.services.event_engine import process_detection_for_events, process_presence_timeouts
 from app.services.snapshot_capture import capture_event_snapshot
 
 
@@ -76,6 +76,7 @@ def persist_detection_event(db: DbSession, event: EdgeDetectionEvent) -> int:
             capture_event_snapshot(db, session, camera, created_event)
         inserted += 1
 
-    if inserted:
+    presence_transitions = process_presence_timeouts(db, session, observed_at)
+    if inserted or presence_transitions:
         db.commit()
     return inserted

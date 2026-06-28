@@ -24,6 +24,7 @@ from app.models.user import User
 from app.models.worker import Worker
 from app.schemas.ergonomic_event import ErgonomicEventRead
 from app.schemas.session import SessionCreate, SessionRead, SessionWorkerAssign, SessionWorkerRead
+from app.schemas.session_summary import ScoreAggregate, SessionExposureSummary, WorkerExposureSummary
 from app.services.event_engine import backfill_session_events, resolve_active_events_for_session
 from app.services.session_codes import create_session_code
 
@@ -198,7 +199,62 @@ def list_session_events(
         .where(ErgonomicEvent.session_id == session.id)
         .order_by(ErgonomicEvent.started_at.desc(), ErgonomicEvent.created_at.desc())
     ).all()
-    return [_event_read(event, session_worker, worker) for event, session_worker, worker in rows]
+    reviewed_types: dict[str, list[str]] = {}
+    for event_id, assessment_type in db.execute(
+        select(Assessment.ergonomic_event_id, Assessment.assessment_type).where(
+            Assessment.session_id == session.id,
+            Assessment.ergonomic_event_id.is_not(None),
+            Assessment.assessment_status == "reviewed",
+        )
+    ):
+        reviewed_types.setdefault(event_id, []).append(assessment_type)
+    return [
+        _event_read(event, session_worker, worker, reviewed_types.get(event.id, []))
+        for event, session_worker, worker in rows
+    ]
+
+
+@router.get("/{session_id}/summary", response_model=SessionExposureSummary)
+def get_session_summary(
+    session_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> SessionExposureSummary:
+    session = _get_owned_session(session_id, current_user, db)
+    backfill_session_events(db, session)
+    worker_rows = db.execute(
+        select(SessionWorker, Worker)
+        .outerjoin(Worker, SessionWorker.worker_id == Worker.id)
+        .where(SessionWorker.session_id == session.id)
+        .order_by(SessionWorker.created_at)
+    ).all()
+    events = list(
+        db.scalars(select(ErgonomicEvent).where(ErgonomicEvent.session_id == session.id))
+    )
+    reviewed_event_ids = set(
+        db.scalars(
+            select(Assessment.ergonomic_event_id).where(
+                Assessment.session_id == session.id,
+                Assessment.ergonomic_event_id.is_not(None),
+                Assessment.assessment_status == "reviewed",
+            )
+        )
+    )
+    now = session.stopped_at or datetime.now(UTC)
+    summaries = [
+        _worker_summary(session_worker, worker, events, reviewed_event_ids, now)
+        for session_worker, worker in worker_rows
+    ]
+    return SessionExposureSummary(
+        session_id=session.id,
+        worker_count=len(summaries),
+        event_count=len(events),
+        high_risk_event_count=sum(row.high_risk_event_count for row in summaries),
+        sustained_event_count=sum(row.sustained_event_count for row in summaries),
+        high_risk_duration_ms=sum(row.high_risk_duration_ms for row in summaries),
+        reviewed_event_count=len(reviewed_event_ids),
+        workers=summaries,
+    )
 
 
 @router.get("/{session_id}/workers", response_model=list[SessionWorkerRead])
@@ -270,6 +326,7 @@ def _event_read(
     event: ErgonomicEvent,
     session_worker: SessionWorker,
     worker: Worker | None,
+    reviewed_assessment_types: list[str],
 ) -> ErgonomicEventRead:
     return ErgonomicEventRead(
         id=event.id,
@@ -291,7 +348,76 @@ def _event_read(
         risk_level=event.risk_level,
         confidence=event.confidence,
         metadata_json=event.metadata_json,
+        reviewed_assessment_types=sorted(reviewed_assessment_types),
     )
+
+
+def _worker_summary(
+    session_worker: SessionWorker,
+    worker: Worker | None,
+    events: list[ErgonomicEvent],
+    reviewed_event_ids: set[str | None],
+    now: datetime,
+) -> WorkerExposureSummary:
+    worker_events = [event for event in events if event.session_worker_id == session_worker.id]
+    observed = next(
+        (event for event in worker_events if event.event_type == "worker_observed"),
+        None,
+    )
+    metadata = observed.metadata_json if observed else {}
+    score_stats = metadata.get("score_stats") if isinstance(metadata, dict) else {}
+    high_risk_events = [
+        event for event in worker_events if event.event_type == "high_risk_posture"
+    ]
+    sustained_events = [
+        event for event in worker_events if event.event_type == "sustained_high_risk"
+    ]
+    return WorkerExposureSummary(
+        session_worker_id=session_worker.id,
+        worker_id=session_worker.worker_id,
+        worker_name=worker.name if worker else None,
+        employee_number=worker.employee_number if worker else None,
+        edge_worker_id=session_worker.edge_worker_id,
+        first_seen_at=_metadata_datetime(metadata.get("first_seen_at")),
+        last_seen_at=_metadata_datetime(metadata.get("last_seen_at")),
+        detection_count=int(metadata.get("detection_count") or 0),
+        high_risk_event_count=len(high_risk_events),
+        sustained_event_count=len(sustained_events),
+        high_risk_duration_ms=sum(_event_duration(event, now) for event in high_risk_events),
+        reviewed_event_count=sum(event.id in reviewed_event_ids for event in worker_events),
+        rula=_score_aggregate(score_stats, "rula"),
+        reba=_score_aggregate(score_stats, "reba"),
+    )
+
+
+def _score_aggregate(score_stats: object, score_type: str) -> ScoreAggregate:
+    values = score_stats.get(score_type, {}) if isinstance(score_stats, dict) else {}
+    count = int(values.get("count") or 0) if isinstance(values, dict) else 0
+    total = int(values.get("sum") or 0) if isinstance(values, dict) else 0
+    peak = int(values.get("peak") or 0) if isinstance(values, dict) else 0
+    return ScoreAggregate(
+        average=round(total / count, 2) if count else None,
+        peak=peak or None,
+        samples=count,
+    )
+
+
+def _event_duration(event: ErgonomicEvent, now: datetime) -> int:
+    if event.duration_ms is not None:
+        return event.duration_ms
+    started_at = event.started_at if event.started_at.tzinfo else event.started_at.replace(tzinfo=UTC)
+    ended_at = now if now.tzinfo else now.replace(tzinfo=UTC)
+    return max(0, int((ended_at - started_at).total_seconds() * 1000))
+
+
+def _metadata_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _start_edges_for_session(session: Session, current_user: User, db: DbSession) -> list[dict]:

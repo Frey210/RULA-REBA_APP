@@ -66,6 +66,7 @@ import type {
   EventReviewRecord,
   PairingToken,
   SessionRecord,
+  SessionExposureSummaryRecord,
   SessionWorkerRecord,
   WorkerEnrollmentImage,
   WorkerRecord,
@@ -475,7 +476,7 @@ function Page({
     return <Placeholder title="Reports" icon={FileText} />
   }
   if (activePage === 'review') {
-    return <SessionReview token={token} sessions={sessions} refreshData={refreshData} />
+    return <SessionReview token={token} sessions={sessions} workers={workers} refreshData={refreshData} />
   }
   return (
     <Dashboard
@@ -1091,7 +1092,10 @@ function formatDuration(durationMs: number): string {
 
 function eventLabel(eventType: string): string {
   if (eventType === 'high_risk_posture') return 'High Risk Posture'
+  if (eventType === 'sustained_high_risk') return 'Sustained High Risk'
   if (eventType === 'worker_observed') return 'Worker Observed'
+  if (eventType === 'worker_entered') return 'Worker Entered'
+  if (eventType === 'worker_left') return 'Worker Left'
   return eventType.replaceAll('_', ' ')
 }
 
@@ -1725,15 +1729,18 @@ const emptyReviewForm: ReviewFormState = {
 function SessionReview({
   token,
   sessions,
+  workers,
   refreshData,
 }: {
   token: string
   sessions: SessionRecord[]
+  workers: WorkerRecord[]
   refreshData: () => Promise<void>
 }) {
   const reviewSessions = sessions.filter((session) => ['running', 'review_pending', 'completed'].includes(session.status))
   const [selectedSessionId, setSelectedSessionId] = useState(reviewSessions[0]?.id ?? '')
   const [events, setEvents] = useState<ErgonomicEventRecord[]>([])
+  const [summary, setSummary] = useState<SessionExposureSummaryRecord | null>(null)
   const [selectedEventId, setSelectedEventId] = useState('')
   const [eventDetail, setEventDetail] = useState<EventDetailRecord | null>(null)
   const [assessmentType, setAssessmentType] = useState<'reba' | 'rula'>('reba')
@@ -1743,6 +1750,12 @@ function SessionReview({
   const [detailLoading, setDetailLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [workerFilter, setWorkerFilter] = useState('all')
+  const [eventTypeFilter, setEventTypeFilter] = useState('all')
+  const [severityFilter, setSeverityFilter] = useState('all')
+  const [reviewFilter, setReviewFilter] = useState('all')
+  const [sortMode, setSortMode] = useState<'time' | 'risk'>('time')
+  const [identityWorkerId, setIdentityWorkerId] = useState('')
 
   useEffect(() => {
     if (!selectedSessionId && reviewSessions[0]?.id) {
@@ -1753,6 +1766,7 @@ function SessionReview({
   useEffect(() => {
     if (!selectedSessionId) {
       setEvents([])
+      setSummary(null)
       return
     }
     let cancelled = false
@@ -1760,13 +1774,21 @@ function SessionReview({
       setLoading(true)
       setMessage(null)
       try {
-        const rows = await apiRequest<ErgonomicEventRecord[]>(
-          `/api/v1/sessions/${selectedSessionId}/events`,
-          {},
-          token,
-        )
+        const [rows, sessionSummary] = await Promise.all([
+          apiRequest<ErgonomicEventRecord[]>(
+            `/api/v1/sessions/${selectedSessionId}/events`,
+            {},
+            token,
+          ),
+          apiRequest<SessionExposureSummaryRecord>(
+            `/api/v1/sessions/${selectedSessionId}/summary`,
+            {},
+            token,
+          ),
+        ])
         if (!cancelled) {
           setEvents(rows)
+          setSummary(sessionSummary)
           setSelectedEventId((current) => {
             if (rows.some((row) => row.id === current)) return current
             return rows.find((row) => row.event_type === 'high_risk_posture')?.id ?? rows[0]?.id ?? ''
@@ -1829,6 +1851,11 @@ function SessionReview({
   }, [assessmentType, eventDetail])
 
   useEffect(() => {
+    const selected = events.find((event) => event.id === selectedEventId)
+    setIdentityWorkerId(selected?.worker_id ?? '')
+  }, [events, selectedEventId])
+
+  useEffect(() => {
     const snapshot = eventDetail?.snapshots[0]
     if (!snapshot) {
       setSnapshotUrl(null)
@@ -1875,6 +1902,22 @@ function SessionReview({
         token,
       )
       await reloadEventDetail()
+      setEvents((current) => current.map((event) => (
+        event.id === selectedEventId
+          ? {
+              ...event,
+              reviewed_assessment_types: Array.from(
+                new Set([...event.reviewed_assessment_types, assessmentType]),
+              ),
+            }
+          : event
+      )))
+      const nextSummary = await apiRequest<SessionExposureSummaryRecord>(
+        `/api/v1/sessions/${selectedSessionId}/summary`,
+        {},
+        token,
+      )
+      setSummary(nextSummary)
       setMessage(`${assessmentType.toUpperCase()} review saved.`)
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Failed to save review.')
@@ -1897,6 +1940,43 @@ function SessionReview({
       setMessage('Snapshot captured.')
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Snapshot capture failed.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function confirmIdentity() {
+    if (!selectedEvent) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      const assigned = await apiRequest<SessionWorkerRecord>(
+        `/api/v1/sessions/${selectedSessionId}/workers/${selectedEvent.session_worker_id}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ worker_id: identityWorkerId || null }),
+        },
+        token,
+      )
+      setEvents((current) => current.map((event) => (
+        event.session_worker_id === assigned.id
+          ? {
+              ...event,
+              worker_id: assigned.worker_id,
+              worker_name: assigned.worker_name,
+              employee_number: assigned.employee_number,
+            }
+          : event
+      )))
+      const nextSummary = await apiRequest<SessionExposureSummaryRecord>(
+        `/api/v1/sessions/${selectedSessionId}/summary`,
+        {},
+        token,
+      )
+      setSummary(nextSummary)
+      setMessage(assigned.worker_name ? `Identity confirmed as ${assigned.worker_name}.` : 'Identity cleared.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to confirm identity.')
     } finally {
       setSaving(false)
     }
@@ -1941,11 +2021,35 @@ function SessionReview({
   const selectedSession = sessions.find((session) => session.id === selectedSessionId)
   const selectedEvent = events.find((event) => event.id === selectedEventId)
   const highRiskEvents = events.filter((event) => event.event_type === 'high_risk_posture')
-  const exposureMs = highRiskEvents.reduce((total, event) => total + (event.duration_ms ?? 0), 0)
-  const workerCount = new Set(events.map((event) => event.session_worker_id)).size
+  const workerOptions = Array.from(
+    new Map(events.map((event) => [event.session_worker_id, event.worker_name ?? event.edge_worker_id])).entries(),
+  )
+  const eventTypeOptions = Array.from(new Set(events.map((event) => event.event_type))).sort()
+  const severityOptions = Array.from(new Set(events.map((event) => event.severity))).sort()
+  const filteredEvents = events
+    .filter((event) => workerFilter === 'all' || event.session_worker_id === workerFilter)
+    .filter((event) => eventTypeFilter === 'all' || event.event_type === eventTypeFilter)
+    .filter((event) => severityFilter === 'all' || event.severity === severityFilter)
+    .filter((event) => {
+      if (reviewFilter === 'reviewed') return event.reviewed_assessment_types.length > 0
+      if (reviewFilter === 'pending') {
+        return event.score !== null && event.reviewed_assessment_types.length === 0
+      }
+      return true
+    })
+    .sort((left, right) => {
+      if (sortMode === 'risk') {
+        const scoreDifference = (right.score ?? -1) - (left.score ?? -1)
+        if (scoreDifference) return scoreDifference
+      }
+      return new Date(right.started_at).getTime() - new Date(left.started_at).getTime()
+    })
   const currentReview = eventDetail?.reviews.find((row) => row.assessment_type === assessmentType)
   const provisional = eventDetail?.provisional_scores[assessmentType]
   const displayedBreakdown = currentReview?.breakdown ?? provisional?.breakdown ?? {}
+  const selectedWorkerSummary = summary?.workers.find(
+    (worker) => worker.session_worker_id === selectedEvent?.session_worker_id,
+  )
 
   return (
     <Stack spacing={3}>
@@ -1996,18 +2100,45 @@ function SessionReview({
         {message ? <Alert severity="info" sx={{ mt: 2 }}>{message}</Alert> : null}
       </Paper>
       <Box className="metricGrid">
-        <Metric label="Workers Observed" value={workerCount} icon={UserRound} />
-        <Metric label="High Risk Events" value={highRiskEvents.length} icon={ShieldCheck} />
-        <Metric label="Active Events" value={events.filter((event) => event.status === 'active').length} icon={Activity} />
-        <Metric label="Exposure Minutes" value={Math.round(exposureMs / 60_000)} icon={BarChart3} />
+        <Metric label="Workers Observed" value={summary?.worker_count ?? 0} icon={UserRound} />
+        <Metric label="High Risk Events" value={summary?.high_risk_event_count ?? highRiskEvents.length} icon={ShieldCheck} />
+        <Metric label="Reviewed Events" value={summary?.reviewed_event_count ?? 0} icon={ClipboardCheck} />
+        <Metric label="Exposure Minutes" value={Math.round((summary?.high_risk_duration_ms ?? 0) / 60_000)} icon={BarChart3} />
       </Box>
       <Paper className="panel reviewWorkspace" elevation={0}>
         <Box className="timelinePane">
-          <Typography variant="h6">Event Timeline</Typography>
+          <Box className="reviewDetailHeader">
+            <Typography variant="h6">Event Timeline</Typography>
+            <Chip size="small" label={`${filteredEvents.length} of ${events.length}`} />
+          </Box>
           <Divider sx={{ my: 2 }} />
-          {events.length ? (
+          <Box className="timelineFilters">
+            <TextField select size="small" label="Worker" value={workerFilter} onChange={(event) => setWorkerFilter(event.target.value)}>
+              <MenuItem value="all">All workers</MenuItem>
+              {workerOptions.map(([id, label]) => <MenuItem key={id} value={id}>{label}</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="Event" value={eventTypeFilter} onChange={(event) => setEventTypeFilter(event.target.value)}>
+              <MenuItem value="all">All events</MenuItem>
+              {eventTypeOptions.map((type) => <MenuItem key={type} value={type}>{eventLabel(type)}</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="Severity" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)}>
+              <MenuItem value="all">All severity</MenuItem>
+              {severityOptions.map((severity) => <MenuItem key={severity} value={severity}>{formatMetricName(severity)}</MenuItem>)}
+            </TextField>
+            <TextField select size="small" label="Review" value={reviewFilter} onChange={(event) => setReviewFilter(event.target.value)}>
+              <MenuItem value="all">All status</MenuItem>
+              <MenuItem value="pending">Pending</MenuItem>
+              <MenuItem value="reviewed">Reviewed</MenuItem>
+            </TextField>
+            <TextField select size="small" label="Sort" value={sortMode} onChange={(event) => setSortMode(event.target.value as 'time' | 'risk')}>
+              <MenuItem value="time">Latest first</MenuItem>
+              <MenuItem value="risk">Worst first</MenuItem>
+            </TextField>
+          </Box>
+          <Divider sx={{ my: 2 }} />
+          {filteredEvents.length ? (
             <Stack spacing={1}>
-              {events.map((event) => (
+              {filteredEvents.map((event) => (
                 <Box
                   key={event.id}
                   className={`eventRow eventRowButton${event.id === selectedEventId ? ' selected' : ''}`}
@@ -2025,6 +2156,7 @@ function SessionReview({
                     </Typography>
                   </Box>
                   <Stack direction="row" spacing={0.75} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                    {event.reviewed_assessment_types.length ? <Chip size="small" label="reviewed" color="success" /> : null}
                     <Chip size="small" label={event.severity} color={severityColor(event.severity)} />
                     {event.score ? <Chip size="small" label={`${event.score_type?.toUpperCase()} ${event.score}`} /> : null}
                     <Typography variant="caption" color="text.secondary">
@@ -2035,7 +2167,9 @@ function SessionReview({
               ))}
             </Stack>
           ) : (
-            <Typography color="text.secondary">No events recorded for this session yet.</Typography>
+            <Typography color="text.secondary">
+              {events.length ? 'No events match the selected filters.' : 'No events recorded for this session yet.'}
+            </Typography>
           )}
         </Box>
 
@@ -2055,6 +2189,33 @@ function SessionReview({
           {detailLoading ? <LinearProgress /> : null}
           {selectedEvent && eventDetail ? (
             <Stack spacing={2.5}>
+              <Box className="identityReviewBar">
+                <TextField
+                  select
+                  size="small"
+                  label="Worker Identity"
+                  value={identityWorkerId}
+                  onChange={(event) => setIdentityWorkerId(event.target.value)}
+                  sx={{ minWidth: 240 }}
+                >
+                  <MenuItem value="">Unassigned</MenuItem>
+                  {workers.filter((worker) => worker.is_active).map((worker) => (
+                    <MenuItem key={worker.id} value={worker.id}>
+                      {worker.name}{worker.employee_number ? ` - ${worker.employee_number}` : ''}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <Button variant="outlined" disabled={saving} onClick={confirmIdentity}>
+                  Confirm Identity
+                </Button>
+                {selectedWorkerSummary ? (
+                  <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap' }}>
+                    <Chip size="small" label={`Peak RULA ${selectedWorkerSummary.rula.peak ?? '-'}`} />
+                    <Chip size="small" label={`Peak REBA ${selectedWorkerSummary.reba.peak ?? '-'}`} />
+                    <Chip size="small" label={`${formatDuration(selectedWorkerSummary.high_risk_duration_ms)} exposure`} />
+                  </Stack>
+                ) : null}
+              </Box>
               <Box className="evidenceGrid">
                 <Box className="snapshotEvidence">
                   {snapshotUrl ? <img src={snapshotUrl} alt="Event posture evidence" /> : (

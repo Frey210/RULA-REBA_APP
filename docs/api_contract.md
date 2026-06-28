@@ -429,6 +429,14 @@ DELETE /api/v1/sessions/{session_id}
 
 Running sessions must be stopped first. Deletion removes the session's detections, ergonomic events, reviews, assessments, snapshots, reports, worker links, and stored media files.
 
+### Session exposure summary
+
+```text
+GET /api/v1/sessions/{session_id}/summary
+```
+
+Returns session and per-worker event counts, high-risk duration, sustained-risk count, review progress, detection count, and average/peak RULA and REBA scores.
+
 ### Get session detail
 
 ```text

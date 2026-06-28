@@ -140,7 +140,7 @@ Acceptance criteria:
 
 ### 6. Event Engine
 
-Status: next major backend feature.
+Status: implemented for worker presence, high-risk transitions, release hysteresis, sustained high-risk posture, score statistics, and session summaries.
 
 Requirements:
 
@@ -166,7 +166,7 @@ Acceptance criteria:
 
 ### 7. Worker Timeline and Session Review
 
-Status: after Event Engine.
+Status: implemented baseline with event navigation, filters, risk sorting, snapshots, identity confirmation, manual scoring, and review completion.
 
 Requirements:
 
@@ -242,4 +242,3 @@ Acceptance criteria:
 - Production installer with embedded PostgreSQL and Windows Service hardening.
 
 These are valid product directions, but they should not block the first usable MVP.
-

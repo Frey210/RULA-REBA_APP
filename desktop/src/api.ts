@@ -89,6 +89,41 @@ export type ErgonomicEventRecord = {
   risk_level: string | null
   confidence: number | null
   metadata_json: Record<string, unknown>
+  reviewed_assessment_types: string[]
+}
+
+export type ScoreAggregateRecord = {
+  average: number | null
+  peak: number | null
+  samples: number
+}
+
+export type WorkerExposureSummaryRecord = {
+  session_worker_id: string
+  worker_id: string | null
+  worker_name: string | null
+  employee_number: string | null
+  edge_worker_id: string
+  first_seen_at: string | null
+  last_seen_at: string | null
+  detection_count: number
+  high_risk_event_count: number
+  sustained_event_count: number
+  high_risk_duration_ms: number
+  reviewed_event_count: number
+  rula: ScoreAggregateRecord
+  reba: ScoreAggregateRecord
+}
+
+export type SessionExposureSummaryRecord = {
+  session_id: string
+  worker_count: number
+  event_count: number
+  high_risk_event_count: number
+  sustained_event_count: number
+  high_risk_duration_ms: number
+  reviewed_event_count: number
+  workers: WorkerExposureSummaryRecord[]
 }
 
 export type EventReviewRecord = {

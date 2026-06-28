@@ -172,8 +172,34 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
                 "event_type": "detection",
                 "cam_id": "CAM_01",
                 "session_id": session_code,
-                "timestamp": 1718742954123,
+                "timestamp": 1718742964123,
                 "frame_id": 101,
+                "detections": [
+                    {
+                        "worker_id": "WORKER_E47A",
+                        "tracking_id": 4,
+                        "confidence": 0.9,
+                        "reid_confidence": 0.91,
+                        "bbox": [124.0, 82.0, 418.0, 718.0],
+                        "keypoints": {"format": "coco17", "points": []},
+                        "metadata": {
+                            "identity_status": "tracked",
+                            "reba": {"score": 3, "risk": "Low"},
+                            "rula": {"score": 6, "risk": "High"},
+                        },
+                    }
+                ],
+            }
+        )
+        assert edge_ws.receive_json()["event_type"] == "ack"
+        edge_ws.send_json(
+            {
+                "schema_version": "1.0",
+                "event_type": "detection",
+                "cam_id": "CAM_01",
+                "session_id": session_code,
+                "timestamp": 1718742965123,
+                "frame_id": 102,
                 "detections": [
                     {
                         "worker_id": "WORKER_E47A",
@@ -182,15 +208,30 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
                         "reid_confidence": 0.91,
                         "bbox": [124.0, 82.0, 418.0, 718.0],
                         "keypoints": {"format": "coco17", "points": []},
-                        "metadata": {"identity_status": "reacquired", "reba": {"score": 3, "risk": "Low"}},
+                        "metadata": {
+                            "identity_status": "reacquired",
+                            "reba": {"score": 3, "risk": "Low"},
+                        },
                     }
                 ],
             }
         )
         assert edge_ws.receive_json()["event_type"] == "ack"
+        edge_ws.send_json(
+            {
+                "schema_version": "1.0",
+                "event_type": "detection",
+                "cam_id": "CAM_01",
+                "session_id": session_code,
+                "timestamp": 1718742968123,
+                "frame_id": 103,
+                "detections": [],
+            }
+        )
+        assert edge_ws.receive_json()["event_type"] == "ack"
 
     detections = list(db_session.scalars(select(Detection)))
-    assert len(detections) == 2
+    assert len(detections) == 3
     assert detections[0].edge_worker_id == "WORKER_E47A"
     assert detections[0].frame_id == 100
     session_workers = list(db_session.scalars(select(SessionWorker)))
@@ -199,12 +240,18 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
     assert session_workers[0].tracking_id == 9
     assert session_workers[0].identity_status == "reacquired"
     assert all(detection.session_worker_id == session_workers[0].id for detection in detections)
-    events = list(db_session.scalars(select(ErgonomicEvent).order_by(ErgonomicEvent.started_at)))
-    assert [event.event_type for event in events] == ["worker_observed", "high_risk_posture"]
-    assert events[1].status == "resolved"
-    assert events[1].score_type == "rula"
-    assert events[1].score == 6
-    assert events[1].duration_ms == 1000
+    events = list(db_session.scalars(select(ErgonomicEvent).order_by(ErgonomicEvent.created_at)))
+    event_types = [event.event_type for event in events]
+    assert event_types.count("worker_observed") == 1
+    assert event_types.count("worker_entered") == 1
+    assert event_types.count("worker_left") == 1
+    assert event_types.count("high_risk_posture") == 1
+    assert event_types.count("sustained_high_risk") == 1
+    high_risk_row = next(event for event in events if event.event_type == "high_risk_posture")
+    assert high_risk_row.status == "resolved"
+    assert high_risk_row.score_type == "rula"
+    assert high_risk_row.score == 6
+    assert high_risk_row.duration_ms == 12000
 
     listed = client.get(
         f"/api/v1/sessions/{session.json()['id']}/events",
@@ -212,6 +259,21 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
     )
     assert listed.status_code == 200
     assert any(event["event_type"] == "high_risk_posture" for event in listed.json())
+    summary = client.get(
+        f"/api/v1/sessions/{session.json()['id']}/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert summary.status_code == 200
+    assert summary.json()["worker_count"] == 1
+    assert summary.json()["high_risk_event_count"] == 1
+    assert summary.json()["sustained_event_count"] == 1
+    assert summary.json()["high_risk_duration_ms"] == 12000
+    assert summary.json()["workers"][0]["detection_count"] == 3
+    assert summary.json()["workers"][0]["rula"] == {
+        "average": 6.0,
+        "peak": 6,
+        "samples": 2,
+    }
     high_risk_event = next(
         event for event in listed.json() if event["event_type"] == "high_risk_posture"
     )
@@ -248,6 +310,19 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
     }
     assert reviewed.json()["provisional_score"] == 3
     assert reviewed.json()["score"] >= reviewed.json()["provisional_score"]
+    reviewed_events = client.get(
+        f"/api/v1/sessions/{session.json()['id']}/events",
+        headers={"Authorization": f"Bearer {token}"},
+    ).json()
+    reviewed_high_risk = next(
+        event for event in reviewed_events if event["event_type"] == "high_risk_posture"
+    )
+    assert reviewed_high_risk["reviewed_assessment_types"] == ["reba"]
+    reviewed_summary = client.get(
+        f"/api/v1/sessions/{session.json()['id']}/summary",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert reviewed_summary.json()["reviewed_event_count"] == 1
 
     invalid_rula = client.put(
         f"/api/v1/sessions/{session.json()['id']}/events/{high_risk_event['id']}/reviews/rula",
@@ -273,7 +348,7 @@ def test_edge_detection_is_persisted_for_known_session_and_camera(
         event for event in rebuilt_events if event["event_type"] == "high_risk_posture"
     )
     assert rebuilt_high_risk["status"] == "resolved"
-    assert rebuilt_high_risk["duration_ms"] == 1000
+    assert rebuilt_high_risk["duration_ms"] == 12000
 
     snapshot_paths = [snapshot.file_path for snapshot in db_session.scalars(select(Snapshot))]
     deleted = client.delete(
