@@ -616,23 +616,26 @@ GET /api/v1/analytics/departments
 
 ## Reports
 
-### Generate report
+### List reports
 
 ```text
-POST /api/v1/reports
+GET /api/v1/reports
 ```
 
-Request:
-
-```json
-{
-  "session_id": "5e9f4b53-9f63-4c94-9e30-78d27db4d01e",
-  "report_type": "pdf"
-}
-```
-
-### Download report
+### Generate session PDF report
 
 ```text
-GET /api/v1/reports/{report_id}/download
+POST /api/v1/reports/sessions/{session_id}
 ```
+
+Running sessions must be stopped before report generation.
+
+Response includes report metadata and an authenticated `download_url`.
+
+### Download report PDF
+
+```text
+GET /api/v1/reports/{report_id}/content
+```
+
+Returns `application/pdf` for reports owned by the authenticated user.

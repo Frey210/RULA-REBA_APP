@@ -15,6 +15,7 @@ dependencies = [
     "pillow>=10.4.0",
     "pyjwt>=2.9.0",
     "python-multipart>=0.0.9",
+    "reportlab>=5.0.0",
     "sqlalchemy>=2.0.34",
     "uvicorn[standard]>=0.30.6",
 ]

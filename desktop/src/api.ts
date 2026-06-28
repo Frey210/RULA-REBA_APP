@@ -195,6 +195,23 @@ export type ExposureOverviewRecord = {
   worst_events: WorstEventRecord[]
 }
 
+export type ReportRecord = {
+  id: string
+  session_id: string | null
+  report_type: string
+  status: string
+  generated_by: string | null
+  generated_at: string | null
+  metadata_json: {
+    session_code?: string
+    event_count?: number
+    worker_count?: number
+    reviewed_assessment_count?: number
+    [key: string]: unknown
+  }
+  download_url: string | null
+}
+
 export type EventReviewRecord = {
   id: string
   assessment_type: 'rula' | 'reba'

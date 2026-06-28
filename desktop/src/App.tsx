@@ -36,6 +36,7 @@ import {
   ClipboardCheck,
   FileText,
   History,
+  Download,
   Eye,
   EyeOff,
   LayoutDashboard,
@@ -66,6 +67,7 @@ import type {
   EventReviewRecord,
   ExposureOverviewRecord,
   PairingToken,
+  ReportRecord,
   SessionRecord,
   SessionExposureSummaryRecord,
   SessionWorkerRecord,
@@ -474,7 +476,7 @@ function Page({
     return <WorkerRegistry token={token} workers={workers} refreshData={refreshData} />
   }
   if (activePage === 'reports') {
-    return <Placeholder title="Reports" icon={FileText} />
+    return <ReportsPage token={token} sessions={sessions} />
   }
   if (activePage === 'review') {
     return <SessionReview token={token} sessions={sessions} workers={workers} refreshData={refreshData} />
@@ -2524,6 +2526,175 @@ function formatMetricName(value: string): string {
   return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+function ReportsPage({
+  token,
+  sessions,
+}: {
+  token: string
+  sessions: SessionRecord[]
+}) {
+  const reportableSessions = sessions.filter((session) => session.status !== 'running')
+  const [selectedSessionId, setSelectedSessionId] = useState(reportableSessions[0]?.id ?? '')
+  const [reports, setReports] = useState<ReportRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [generating, setGenerating] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const selectedSession = sessions.find((session) => session.id === selectedSessionId)
+
+  const loadReports = useCallback(async () => {
+    setLoading(true)
+    setMessage(null)
+    try {
+      const rows = await apiRequest<ReportRecord[]>('/api/v1/reports', {}, token)
+      setReports(rows)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to load reports.')
+    } finally {
+      setLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => {
+    void loadReports()
+  }, [loadReports])
+
+  useEffect(() => {
+    if (!selectedSessionId && reportableSessions.length) {
+      setSelectedSessionId(reportableSessions[0].id)
+    }
+  }, [reportableSessions, selectedSessionId])
+
+  async function generateReport() {
+    if (!selectedSessionId) return
+    setGenerating(true)
+    setMessage(null)
+    try {
+      const report = await apiRequest<ReportRecord>(
+        `/api/v1/reports/sessions/${selectedSessionId}`,
+        { method: 'POST' },
+        token,
+      )
+      setReports((current) => [report, ...current.filter((row) => row.id !== report.id)])
+      setMessage('Report PDF generated.')
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to generate report.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  async function downloadReport(report: ReportRecord) {
+    if (!report.download_url) return
+    try {
+      const blob = await apiBlob(report.download_url, token)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `${report.metadata_json.session_code ?? 'session'}_ergonomic_report.pdf`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Failed to download report.')
+    }
+  }
+
+  return (
+    <Stack spacing={3}>
+      <PageTitle
+        title="Reports"
+        action={<Button onClick={() => void loadReports()}>Refresh</Button>}
+      />
+      <Paper className="panel" elevation={0}>
+        <Box className="reportsHeader">
+          <Box>
+            <Typography variant="h6">Generate Session PDF</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Export review evidence, manual scores, event timeline, and selected snapshots.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+            <TextField
+              select
+              size="small"
+              label="Session"
+              value={selectedSessionId}
+              onChange={(event) => setSelectedSessionId(event.target.value)}
+              sx={{ minWidth: 320 }}
+            >
+              {reportableSessions.map((session) => (
+                <MenuItem key={session.id} value={session.id}>
+                  {session.session_code} - {session.status}
+                </MenuItem>
+              ))}
+            </TextField>
+            <Button
+              variant="contained"
+              startIcon={<FileText size={16} />}
+              disabled={!selectedSessionId || generating}
+              onClick={generateReport}
+            >
+              Generate PDF
+            </Button>
+          </Stack>
+        </Box>
+        {selectedSession ? (
+          <Box className="reportSessionSummary">
+            <Chip size="small" label={selectedSession.status} />
+            <Typography variant="body2" color="text.secondary">
+              {selectedSession.notes || selectedSession.session_code}
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {selectedSession.started_at ? formatDateTime(selectedSession.started_at) : 'Not started'}
+            </Typography>
+          </Box>
+        ) : null}
+        {generating || loading ? <LinearProgress sx={{ mt: 2 }} /> : null}
+        {message ? <Alert severity={message.includes('Failed') ? 'error' : 'info'} sx={{ mt: 2 }}>{message}</Alert> : null}
+      </Paper>
+
+      <Paper className="panel" elevation={0}>
+        <Typography variant="h6">Generated Reports</Typography>
+        <Divider sx={{ my: 2 }} />
+        {reports.length ? (
+          <Box className="reportList">
+            {reports.map((report) => (
+              <Box key={report.id} className="reportRow">
+                <FileText size={20} />
+                <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography sx={{ fontWeight: 700 }}>
+                    {report.metadata_json.session_code ?? report.session_id ?? 'Session report'}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {report.generated_at ? formatDateTime(report.generated_at) : '-'} - {report.status}
+                  </Typography>
+                </Box>
+                <Box className="reportStats">
+                  <Chip size="small" label={`${report.metadata_json.worker_count ?? 0} workers`} />
+                  <Chip size="small" label={`${report.metadata_json.event_count ?? 0} events`} />
+                  <Chip size="small" label={`${report.metadata_json.reviewed_assessment_count ?? 0} reviewed`} />
+                </Box>
+                <Button
+                  size="small"
+                  startIcon={<Download size={16} />}
+                  disabled={!report.download_url}
+                  onClick={() => void downloadReport(report)}
+                >
+                  Download
+                </Button>
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          <Typography color="text.secondary">No reports generated yet.</Typography>
+        )}
+      </Paper>
+    </Stack>
+  )
+}
+
 function SessionList({
   title,
   sessions,
@@ -2736,16 +2907,6 @@ function DeviceRow({
         </Typography>
       ) : null}
     </Box>
-  )
-}
-
-function Placeholder({ title, icon: Icon }: { title: string; icon: typeof FileText }) {
-  return (
-    <Paper className="panel emptyState" elevation={0}>
-      <Icon size={28} />
-      <Typography variant="h6">{title}</Typography>
-      <Typography color="text.secondary">Pending backend workflow.</Typography>
-    </Paper>
   )
 }
 

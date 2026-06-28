@@ -6,6 +6,7 @@ from app.api.v1.routes import (
     camera_nodes,
     device_pairings,
     event_reviews,
+    reports,
     scoring,
     sessions,
     version,
@@ -23,4 +24,5 @@ api_router.include_router(camera_nodes.router, prefix="/camera-nodes", tags=["ca
 api_router.include_router(device_pairings.router, prefix="/device-pairings", tags=["device-pairings"])
 api_router.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 api_router.include_router(event_reviews.router, prefix="/sessions", tags=["session-review"])
+api_router.include_router(reports.router, prefix="/reports", tags=["reports"])
 api_router.include_router(scoring.router, prefix="/scoring", tags=["scoring"])

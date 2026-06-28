@@ -208,6 +208,37 @@ def test_pairing_and_session_lifecycle(client: TestClient) -> None:
     assert complete_response.json()["status"] == "completed"
 
 
+def test_session_report_pdf_is_private(client: TestClient) -> None:
+    token_a = register_and_login(client, "report-a@example.com")
+    token_b = register_and_login(client, "report-b@example.com")
+    session = client.post(
+        "/api/v1/sessions",
+        headers=auth_header(token_a),
+        json={"notes": "Report validation"},
+    ).json()
+
+    created = client.post(
+        f"/api/v1/reports/sessions/{session['id']}",
+        headers=auth_header(token_a),
+    )
+    assert created.status_code == 200
+    report = created.json()
+    assert report["status"] == "ready"
+    assert report["download_url"]
+
+    listed = client.get("/api/v1/reports", headers=auth_header(token_a))
+    assert listed.status_code == 200
+    assert listed.json()[0]["id"] == report["id"]
+
+    hidden = client.get(report["download_url"], headers=auth_header(token_b))
+    assert hidden.status_code == 404
+
+    content = client.get(report["download_url"], headers=auth_header(token_a))
+    assert content.status_code == 200
+    assert content.headers["content-type"] == "application/pdf"
+    assert content.content.startswith(b"%PDF")
+
+
 def test_camera_node_rename_and_delete_are_user_scoped(client: TestClient) -> None:
     token_a = register_and_login(client, "device-a@example.com")
     token_b = register_and_login(client, "device-b@example.com")

@@ -129,6 +129,8 @@ Exit criteria:
 
 ## Priority 7 - Reports
 
+Status: baseline implemented with session PDF generation, authenticated report list, and download from Electron.
+
 Goal: membuat output yang bisa dibagikan untuk audit internal.
 
 Work items:

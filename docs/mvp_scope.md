@@ -36,7 +36,7 @@ Local Backend
   - Detection ingestion
   - Event engine
   - Exposure analytics
-  - Report metadata
+  - Report metadata and PDF generation
 
 Electron Desktop
   - Login
@@ -215,7 +215,7 @@ Acceptance criteria:
 
 ### 10. MVP Reports
 
-Status: after analytics.
+Status: baseline implemented for session PDF generation, authenticated report listing, and download.
 
 Requirements:
 
@@ -224,7 +224,7 @@ Requirements:
 
 Acceptance criteria:
 
-- HSE user can produce a report from a completed session.
+- HSE user can produce a report from a stopped/completed session.
 - Report includes enough data for internal ergonomic review.
 
 ## Explicitly Out of MVP
