@@ -17,3 +17,4 @@ htmlcov/
 *.db
 storage/
 backend/media/
+RULA-REBA_APP.code-workspace
