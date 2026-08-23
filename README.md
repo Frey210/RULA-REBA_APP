@@ -54,6 +54,13 @@ It uses `backend\.venv` and the local SQLite database `backend\dev_server.sqlite
 Set `ERGOQUIPT_DATABASE_URL` before launching only when a different database is required.
 Pending Alembic migrations are applied automatically before FastAPI starts.
 
+## Connecting an edge device
+
+- Direct LAN: connect the Raspberry Pi and laptop with an Ethernet cable, leave the laptop adapter on automatic DHCP, then open **Devices** and select **Scan LAN**. The edge address is `10.55.0.1`; Windows Internet Connection Sharing is not required.
+- Wi-Fi onboarding: connect the laptop once to `ErgoQuipt-CAM01` using the password on the device label, open **Devices**, pair the discovered edge, then select **Set up Wi-Fi**. Choose the destination network, enter its password, reconnect the laptop to that network, and run **Scan LAN** again.
+
+If a development laptop previously used Windows Internet Connection Sharing, disable sharing and restore the Ethernet adapter to automatic DHCP before testing direct LAN.
+
 Worker enrollment photos are stored privately under `backend\media\worker-enrollments`.
 The frontend retrieves them through authenticated API requests; the media directory
 is intentionally excluded from Git.
