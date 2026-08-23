@@ -13,6 +13,7 @@ build/
 node_modules/
 coverage/
 htmlcov/
+tmp/
 *.sqlite3
 *.db
 backend/build/

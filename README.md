@@ -4,6 +4,13 @@ AI-Based Ergonomic Monitoring System for RULA/REBA assessment.
 
 This repository contains the FastAPI backend, PostgreSQL data model, analytics/reporting services, and the future Electron desktop application for the RULA/REBA ergonomic assessment platform.
 
+## Product Documentation
+
+- [Panduan Pengguna MVP](output/pdf/ERGoSIGHT-Panduan-Pengguna-MVP.pdf)
+- [Dokumen Teknis MVP](output/pdf/ERGoSIGHT-Dokumen-Teknis-MVP.pdf)
+
+Rebuild both PDFs with `py -3.12 scripts\generate_product_docs.py`.
+
 ## Current Status
 
 Implemented:
