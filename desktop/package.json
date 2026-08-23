@@ -1,7 +1,9 @@
 {
-  "name": "desktop",
+  "name": "ergosight-desktop",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "ERGoSIGHT AI-Based Ergonomic Monitoring System",
+  "author": "ERGoSIGHT",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -9,34 +11,77 @@
     "dev": "vite",
     "electron": "concurrently -k \"npm:backend\" \"npm:dev\" \"wait-on tcp:127.0.0.1:8000 http://127.0.0.1:5173 && node electron/launch.cjs\"",
     "build": "tsc -b && vite build",
+    "build:backend": "powershell -ExecutionPolicy Bypass -File ../scripts/build-backend.ps1",
+    "dist:win": "npm run build:backend && npm run build && electron-builder --win nsis",
     "lint": "eslint .",
     "preview": "vite preview"
   },
-  "dependencies": {
+  "devDependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@eslint/js": "^10.0.1",
     "@mui/icons-material": "^9.1.1",
     "@mui/material": "^9.1.1",
-    "lucide-react": "^1.21.0",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
-  },
-  "devDependencies": {
-    "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^10.0.3",
     "cross-env": "^10.1.0",
-    "electron": "^33.4.11",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.0.12",
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "lucide-react": "^1.21.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",
     "vite": "^8.0.12",
     "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "com.ergosight.assessment",
+    "productName": "ERGoSIGHT",
+    "electronDist": "node_modules/electron/dist",
+    "asar": true,
+    "directories": {
+      "output": "installer",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/main.cjs",
+      "electron/preload.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/ergosight-backend",
+        "to": "backend"
+      },
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "artifactName": "ERGoSIGHT-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ERGoSIGHT",
+      "include": "build/installer.nsh",
+      "deleteAppDataOnUninstall": false
+    }
   }
 }

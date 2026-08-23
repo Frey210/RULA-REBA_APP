@@ -1,2 +1,1 @@
-"""ErgoQuipt backend package."""
-
+"""ERGoSIGHT backend package."""

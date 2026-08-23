@@ -15,6 +15,12 @@ coverage/
 htmlcov/
 *.sqlite3
 *.db
+backend/build/
+backend/dist/
+desktop/release/
+desktop/installer/
+!desktop/build/
+!desktop/build/**
 storage/
 media/
 backend/media/

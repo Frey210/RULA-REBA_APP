@@ -60,6 +60,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import './App.css'
+import ergosightLogo from './assets/ergosight-logo.png'
 import {
   apiBlob,
   apiRequest,
@@ -118,10 +119,10 @@ const navItems = [
 const theme = createTheme({
   palette: {
     mode: 'light',
-    primary: { main: '#176d6a' },
-    secondary: { main: '#8a5a12' },
-    background: { default: '#f6f7f8', paper: '#ffffff' },
-    success: { main: '#287d4f' },
+    primary: { main: '#0077a8' },
+    secondary: { main: '#394b59' },
+    background: { default: '#f4f7f9', paper: '#ffffff' },
+    success: { main: '#1f7a55' },
     warning: { main: '#a76405' },
     error: { main: '#b42318' },
   },
@@ -131,6 +132,30 @@ const theme = createTheme({
     h5: { fontWeight: 700 },
     h6: { fontWeight: 700 },
     button: { textTransform: 'none', fontWeight: 700 },
+  },
+  components: {
+    MuiDrawer: {
+      styleOverrides: {
+        paper: { backgroundColor: '#0b1218', color: '#eef7fb', borderRight: 0 },
+      },
+    },
+    MuiListItemIcon: {
+      styleOverrides: { root: { minWidth: 42, color: '#8fa6b4' } },
+    },
+    MuiListItemButton: {
+      styleOverrides: {
+        root: {
+          margin: '3px 10px',
+          borderRadius: 6,
+          '&.Mui-selected': {
+            color: '#ffffff',
+            backgroundColor: 'rgba(0, 185, 255, 0.18)',
+            '& .MuiListItemIcon-root': { color: '#00b9ff' },
+          },
+          '&.Mui-selected:hover': { backgroundColor: 'rgba(0, 185, 255, 0.24)' },
+        },
+      },
+    },
   },
 })
 
@@ -255,9 +280,9 @@ function App() {
       <Box className="appShell">
         <AppBar position="fixed" elevation={0} className="topBar">
           <Toolbar>
-            <ShieldCheck size={22} />
+            <ShieldCheck size={22} color="#0077a8" />
             <Typography variant="h6" sx={{ ml: 1, flexGrow: 1 }}>
-              ErgoQuipt
+              ERGoSIGHT
             </Typography>
             <StatusChip status={backendStatus} />
             <Button color="inherit" startIcon={<LogOut size={18} />} onClick={logout}>
@@ -276,7 +301,7 @@ function App() {
         >
           <Toolbar />
           <Box className="drawerHeader">
-            <Typography variant="overline">Workspace</Typography>
+            <img className="drawerLogo" src={ergosightLogo} alt="ERGoSIGHT" />
             <Typography variant="body2">HSE Operator Console</Typography>
           </Box>
           <List>
@@ -380,12 +405,11 @@ function LoginScreen({
 
   return (
     <Box className="loginPage">
-      <Paper className="loginPanel" elevation={0}>
-        <Stack spacing={3}>
-          <Box className="inlineTitle">
-            <ShieldCheck size={28} />
-            <Typography variant="h5">ErgoQuipt</Typography>
-          </Box>
+      <Box className="loginShell">
+        <img className="loginLogo" src={ergosightLogo} alt="ERGoSIGHT AI-Based Ergonomic Monitoring System" />
+        <Paper className="loginPanel" elevation={0}>
+          <Stack spacing={3}>
+          <Typography variant="h5">Operator Sign In</Typography>
           <Stack direction="row" spacing={1}>
             <StatusChip status={backendStatus} />
             <Chip size="small" label="JWT secured" color="primary" variant="outlined" />
@@ -446,8 +470,9 @@ function LoginScreen({
               </Button>
             </Stack>
           </Box>
-        </Stack>
-      </Paper>
+          </Stack>
+        </Paper>
+      </Box>
     </Box>
   )
 }
@@ -1685,7 +1710,7 @@ function SettingsPage({
       }
       const info = await response.json()
       if (info.service !== 'ergoquipt-edge') {
-        throw new Error('Not an ErgoQuipt edge device')
+        throw new Error('Not an ERGoSIGHT edge device')
       }
       const parsedUrl = new URL(baseUrl)
       const device = {

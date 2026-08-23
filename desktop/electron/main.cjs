@@ -1,8 +1,14 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain } = require('electron')
+const { spawn } = require('node:child_process')
+const crypto = require('node:crypto')
+const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
+let backendProcess = null
+let backendLogFd = null
+let mainWindow = null
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -11,11 +17,18 @@ function createWindow() {
     minWidth: 1120,
     minHeight: 720,
     backgroundColor: '#f7f8fa',
+    icon: isDev
+      ? path.resolve(__dirname, '../build/icon.png')
+      : path.join(process.resourcesPath, 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
+  })
+  mainWindow = win
+  win.on('closed', () => {
+    mainWindow = null
   })
 
   if (isDev) {
@@ -23,6 +36,72 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'))
   }
+}
+
+async function startPackagedBackend() {
+  if (await backendIsReady()) return
+
+  const executable = path.join(process.resourcesPath, 'backend', 'ergosight-backend.exe')
+  if (!fs.existsSync(executable)) {
+    throw new Error(`Bundled backend not found: ${executable}`)
+  }
+
+  const dataDir = app.getPath('userData')
+  const mediaDir = path.join(dataDir, 'media')
+  const logDir = path.join(dataDir, 'logs')
+  fs.mkdirSync(mediaDir, { recursive: true })
+  fs.mkdirSync(logDir, { recursive: true })
+
+  const secretPath = path.join(dataDir, '.jwt-secret')
+  if (!fs.existsSync(secretPath)) {
+    fs.writeFileSync(secretPath, crypto.randomBytes(48).toString('hex'), { encoding: 'utf8', mode: 0o600 })
+  }
+
+  backendLogFd = fs.openSync(path.join(logDir, 'backend.log'), 'a')
+  backendProcess = spawn(executable, [], {
+    cwd: dataDir,
+    env: {
+      ...process.env,
+      APP_NAME: 'ERGoSIGHT Backend',
+      ENVIRONMENT: 'production',
+      DATABASE_URL: `sqlite:///${path.join(dataDir, 'ergosight.sqlite3').replaceAll('\\', '/')}`,
+      MEDIA_ROOT: mediaDir,
+      JWT_SECRET_KEY: fs.readFileSync(secretPath, 'utf8').trim(),
+    },
+    stdio: ['ignore', backendLogFd, backendLogFd],
+    windowsHide: true,
+  })
+
+  backendProcess.once('exit', () => {
+    backendProcess = null
+  })
+
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    if (await backendIsReady()) return
+    if (!backendProcess) break
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  throw new Error(`Backend did not start. See ${path.join(logDir, 'backend.log')}`)
+}
+
+async function backendIsReady() {
+  try {
+    const response = await fetch('http://127.0.0.1:8000/openapi.json', {
+      signal: AbortSignal.timeout(800),
+    })
+    if (!response.ok) return false
+    const schema = await response.json()
+    return Boolean(schema.paths?.['/api/v1/sessions/{session_id}/events'])
+  } catch {
+    return false
+  }
+}
+
+function stopPackagedBackend() {
+  backendProcess?.kill()
+  backendProcess = null
+  if (backendLogFd !== null) fs.closeSync(backendLogFd)
+  backendLogFd = null
 }
 
 ipcMain.handle('devices:discover', async () => {
@@ -182,15 +261,36 @@ function findLocalIpForPeer(peerIp) {
   return null
 }
 
-app.whenReady().then(() => {
-  createWindow()
+const hasInstanceLock = app.requestSingleInstanceLock()
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
-    }
+if (!hasInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
   })
-})
+
+  app.whenReady().then(async () => {
+    try {
+      if (!isDev) await startPackagedBackend()
+      createWindow()
+    } catch (error) {
+      dialog.showErrorBox('ERGoSIGHT could not start', error instanceof Error ? error.message : String(error))
+      app.quit()
+      return
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow()
+      }
+    })
+  })
+}
+
+app.on('before-quit', stopPackagedBackend)
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

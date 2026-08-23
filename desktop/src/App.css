@@ -5,13 +5,21 @@
 
 .topBar {
   border-bottom: 1px solid #dde2e4;
-  color: #16302f;
+  color: #13212b;
   background: rgba(255, 255, 255, 0.96);
 }
 
 .drawerHeader {
-  padding: 18px 20px;
-  border-bottom: 1px solid #e4e7e8;
+  padding: 18px 20px 16px;
+  border-bottom: 1px solid #22313c;
+  color: #9fb2be;
+}
+
+.drawerLogo {
+  display: block;
+  width: 188px;
+  height: auto;
+  margin: 0 auto 8px;
 }
 
 .mainPane {
@@ -24,13 +32,23 @@
   min-height: 100vh;
   display: grid;
   place-items: center;
-  background:
-    linear-gradient(rgba(247, 248, 250, 0.86), rgba(247, 248, 250, 0.86)),
-    url('/src/assets/hero.png') center / 420px no-repeat;
+  padding: 32px;
+  background: #0b1218;
+}
+
+.loginShell {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.loginLogo {
+  display: block;
+  width: min(310px, 80vw);
+  height: auto;
+  margin: 0 auto 22px;
 }
 
 .loginPanel {
-  width: min(420px, calc(100vw - 32px));
+  width: 100%;
   padding: 28px;
   border: 1px solid #dde2e4;
 }
@@ -107,7 +125,7 @@
 .trendBar {
   height: 100%;
   border-radius: 3px;
-  background: #176d6a;
+  background: #0077a8;
 }
 
 .inlineTitle,
@@ -215,9 +233,9 @@
 }
 
 .eventRowButton.selected {
-  border-color: #176d6a;
+  border-color: #0077a8;
   background: #edf7f6;
-  box-shadow: inset 3px 0 #176d6a;
+  box-shadow: inset 3px 0 #0077a8;
 }
 
 .reviewDetailHeader {
@@ -293,7 +311,7 @@
 
 .scoreComparison > div {
   padding-left: 12px;
-  border-left: 3px solid #176d6a;
+  border-left: 3px solid #0077a8;
 }
 
 .reviewFormGrid {

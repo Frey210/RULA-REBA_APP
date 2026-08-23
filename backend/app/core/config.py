@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "ErgoQuipt Backend"
+    app_name: str = "ERGoSIGHT Backend"
     environment: str = "local"
     database_url: str = "sqlite:///./ergoquipt_dev.sqlite3"
     jwt_secret_key: str = Field(default="change-this-secret-before-production")
@@ -21,6 +21,7 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "null",
     ]
 
     @field_validator("database_url")

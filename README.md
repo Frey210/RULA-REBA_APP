@@ -1,6 +1,6 @@
-# RULA-REBA APP
+# ERGoSIGHT
 
-ErgoQuipt Phase 1 application repository.
+AI-Based Ergonomic Monitoring System for RULA/REBA assessment.
 
 This repository contains the FastAPI backend, PostgreSQL data model, analytics/reporting services, and the future Electron desktop application for the RULA/REBA ergonomic assessment platform.
 
@@ -54,10 +54,22 @@ It uses `backend\.venv` and the local SQLite database `backend\dev_server.sqlite
 Set `ERGOQUIPT_DATABASE_URL` before launching only when a different database is required.
 Pending Alembic migrations are applied automatically before FastAPI starts.
 
+## Windows installer
+
+Build the complete Windows installer from the `desktop` directory:
+
+```powershell
+npm.cmd run dist:win
+```
+
+The output is `desktop\installer\ERGoSIGHT-Setup-0.1.0.exe`. It bundles Electron and a standalone FastAPI backend, applies database migrations automatically, creates desktop/start-menu shortcuts, and adds a private-network firewall rule for Raspberry Pi communication. A user installation does not require Python, Node.js, PostgreSQL, or this source repository.
+
+Production data, enrollment images, logs, and the generated JWT secret are stored under `%APPDATA%\ERGoSIGHT`. Uninstalling or upgrading the application preserves this directory.
+
 ## Connecting an edge device
 
 - Direct LAN: connect the Raspberry Pi and laptop with an Ethernet cable, leave the laptop adapter on automatic DHCP, then open **Devices** and select **Scan LAN**. The edge address is `10.55.0.1`; Windows Internet Connection Sharing is not required.
-- Wi-Fi onboarding: connect the laptop once to `ErgoQuipt-CAM01` using the password on the device label, open **Devices**, pair the discovered edge, then select **Set up Wi-Fi**. Choose the destination network, enter its password, reconnect the laptop to that network, and run **Scan LAN** again.
+- Wi-Fi onboarding: connect the laptop once to `ERGoSIGHT-CAM01` using the password on the device label, open **Devices**, pair the discovered edge, then select **Set up Wi-Fi**. Choose the destination network, enter its password, reconnect the laptop to that network, and run **Scan LAN** again.
 
 If a development laptop previously used Windows Internet Connection Sharing, disable sharing and restore the Ethernet adapter to automatic DHCP before testing direct LAN.
 
