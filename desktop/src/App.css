@@ -427,6 +427,13 @@
   flex: 1 1 260px;
 }
 
+.wifiNetworkList {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #dde2e4;
+  border-radius: 8px;
+}
+
 .liveGrid {
   display: grid;
   grid-template-columns: minmax(460px, 1.35fr) minmax(360px, 0.85fr);

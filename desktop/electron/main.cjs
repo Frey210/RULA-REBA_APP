@@ -55,9 +55,40 @@ ipcMain.handle('network:backend-url-for-device', async (_event, payload) => {
   return normalizeBackendUrlForDevice(payload.backendUrl, payload.baseUrl)
 })
 
+ipcMain.handle('network:status', async (_event, payload) => {
+  return edgeRequest(payload.baseUrl, '/network/status')
+})
+
+ipcMain.handle('network:wifi-scan', async (_event, payload) => {
+  return edgeRequest(payload.baseUrl, '/network/wifi')
+})
+
+ipcMain.handle('network:wifi-connect', async (_event, payload) => {
+  return edgeRequest(payload.baseUrl, '/network/wifi/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ssid: payload.ssid, password: payload.password }),
+  })
+})
+
+async function edgeRequest(baseUrl, pathName, options = {}) {
+  const response = await fetch(`${baseUrl}${pathName}`, {
+    ...options,
+    signal: AbortSignal.timeout(45000),
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    throw new Error(payload?.detail || `Edge request failed: ${response.status}`)
+  }
+  return response.json()
+}
+
 function getLocalSubnetTargets(port) {
   const interfaces = os.networkInterfaces()
-  const addresses = []
+  const addresses = [
+    { ip: '10.55.0.1', port, baseUrl: `http://10.55.0.1:${port}` },
+    { ip: '10.42.0.1', port, baseUrl: `http://10.42.0.1:${port}` },
+  ]
 
   for (const entries of Object.values(interfaces)) {
     for (const entry of entries ?? []) {
@@ -78,7 +109,7 @@ function getLocalSubnetTargets(port) {
     }
   }
 
-  return addresses
+  return [...new Map(addresses.map((target) => [target.baseUrl, target])).values()]
 }
 
 async function probeDevice(target) {

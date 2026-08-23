@@ -8,6 +8,10 @@ import {
   Chip,
   CssBaseline,
   Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Drawer,
   FormControlLabel,
   IconButton,
@@ -43,12 +47,14 @@ import {
   LogOut,
   Pencil,
   RadioReceiver,
+  RefreshCw,
   RotateCcw,
   Save,
   Settings,
   ShieldCheck,
   Trash2,
   UserRound,
+  Wifi,
   X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -74,7 +80,7 @@ import type {
   WorkerEnrollmentImage,
   WorkerRecord,
 } from './api'
-import type { DiscoveredDevice } from './types'
+import type { DiscoveredDevice, EdgeNetworkStatus, WifiNetwork } from './types'
 
 const drawerWidth = 248
 const backendUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000'
@@ -1616,8 +1622,17 @@ function SettingsPage({
   const [devices, setDevices] = useState<DiscoveredDevice[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const [manualIp, setManualIp] = useState('192.168.137.199')
+  const [manualIp, setManualIp] = useState('10.55.0.1')
   const [backendReachableUrl, setBackendReachableUrl] = useState(backendUrl)
+  const [networkDevice, setNetworkDevice] = useState<DiscoveredDevice | null>(null)
+  const [networkStatus, setNetworkStatus] = useState<EdgeNetworkStatus | null>(null)
+  const [wifiNetworks, setWifiNetworks] = useState<WifiNetwork[]>([])
+  const [wifiSsid, setWifiSsid] = useState('')
+  const [wifiPassword, setWifiPassword] = useState('')
+  const [showWifiPassword, setShowWifiPassword] = useState(false)
+  const [networkLoading, setNetworkLoading] = useState(false)
+  const [networkMessage, setNetworkMessage] = useState<string | null>(null)
+  const [networkError, setNetworkError] = useState(false)
   const isElectron = Boolean(window.ergoquipt)
 
   async function createPairing() {
@@ -1645,6 +1660,11 @@ function SettingsPage({
       if (window.ergoquipt?.discoverDevices) {
         const discovered = await window.ergoquipt.discoverDevices()
         setDevices(discovered)
+        await Promise.all(
+          discovered
+            .filter((device) => device.paired)
+            .map((device) => attachEdgeBaseUrl(device.cam_id, device.baseUrl)),
+        )
         setMessage(discovered.length ? `Found ${discovered.length} edge device(s).` : 'No devices found on LAN scan.')
       } else {
         await probeManualIp()
@@ -1678,6 +1698,7 @@ function SettingsPage({
         baseUrl,
       }
       setDevices([device])
+      if (device.paired) await attachEdgeBaseUrl(device.cam_id, device.baseUrl)
       setMessage(`Found ${info.hostname} at ${baseUrl}.`)
       if (window.ergoquipt?.backendUrlForDevice) {
         const nextBackendUrl = await window.ergoquipt.backendUrlForDevice({
@@ -1717,6 +1738,75 @@ function SettingsPage({
       setMessage(err instanceof Error ? `Pairing failed: ${err.message}` : 'Pairing failed.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function openNetworkSetup(device: DiscoveredDevice) {
+    setNetworkDevice(device)
+    setNetworkStatus(null)
+    setWifiNetworks([])
+    setWifiSsid('')
+    setWifiPassword('')
+    setNetworkMessage(null)
+    setNetworkError(false)
+    setNetworkLoading(true)
+    try {
+      if (!window.ergoquipt) throw new Error('Wi-Fi setup requires the Electron application.')
+      const [status, scan] = await Promise.all([
+        window.ergoquipt.networkStatus({ baseUrl: device.baseUrl }),
+        window.ergoquipt.scanWifi({ baseUrl: device.baseUrl }),
+      ])
+      setNetworkStatus(status)
+      setWifiNetworks(scan.networks)
+      const connected = scan.networks.find((network) => network.connected)
+      if (connected && !status.hotspot) setWifiSsid(connected.ssid)
+    } catch (err) {
+      setNetworkError(true)
+      setNetworkMessage(err instanceof Error ? err.message : 'Unable to read device networks.')
+    } finally {
+      setNetworkLoading(false)
+    }
+  }
+
+  async function refreshWifiNetworks() {
+    if (!networkDevice || !window.ergoquipt) return
+    setNetworkLoading(true)
+    setNetworkMessage(null)
+    setNetworkError(false)
+    try {
+      const scan = await window.ergoquipt.scanWifi({ baseUrl: networkDevice.baseUrl })
+      setWifiNetworks(scan.networks)
+    } catch (err) {
+      setNetworkError(true)
+      setNetworkMessage(err instanceof Error ? err.message : 'Wi-Fi scan failed.')
+    } finally {
+      setNetworkLoading(false)
+    }
+  }
+
+  async function submitWifi(event: FormEvent) {
+    event.preventDefault()
+    if (!networkDevice || !window.ergoquipt) return
+    if (!wifiSsid.trim() || (wifiPassword.length > 0 && wifiPassword.length < 8)) {
+      setNetworkError(true)
+      setNetworkMessage('Enter an SSID and a password of at least 8 characters, or leave it empty for an open network.')
+      return
+    }
+    setNetworkLoading(true)
+    setNetworkMessage(null)
+    setNetworkError(false)
+    try {
+      await window.ergoquipt.connectWifi({
+        baseUrl: networkDevice.baseUrl,
+        ssid: wifiSsid.trim(),
+        password: wifiPassword,
+      })
+      setNetworkMessage(`Connecting to ${wifiSsid.trim()}. Reconnect this laptop to that Wi-Fi, then run Scan LAN.`)
+    } catch (err) {
+      setNetworkError(true)
+      setNetworkMessage(err instanceof Error ? err.message : 'Wi-Fi connection failed.')
+    } finally {
+      setNetworkLoading(false)
     }
   }
 
@@ -1817,6 +1907,15 @@ function SettingsPage({
               <Chip size="small" label={device.address} />
               <Chip size="small" label={device.status} />
               <Chip size="small" label={device.paired ? 'paired' : 'unpaired'} color={device.paired ? 'success' : 'default'} />
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<Wifi size={16} />}
+                disabled={!device.paired || loading}
+                onClick={() => void openNetworkSetup(device)}
+              >
+                Set up Wi-Fi
+              </Button>
               <Button size="small" variant="contained" disabled={!pairing || loading} onClick={() => pairDevice(device)}>
                 {pairing ? 'Pair' : 'Create code first'}
               </Button>
@@ -1826,6 +1925,90 @@ function SettingsPage({
           <Typography color="text.secondary">No edge devices listed yet. Use Scan LAN or Probe IP.</Typography>
         )}
       </Paper>
+      <Dialog open={Boolean(networkDevice)} onClose={() => setNetworkDevice(null)} fullWidth maxWidth="sm">
+        <Box component="form" onSubmit={submitWifi}>
+          <DialogTitle>Wi-Fi setup</DialogTitle>
+          <DialogContent dividers>
+            <Stack spacing={2}>
+              <Typography color="text.secondary">
+                {networkDevice?.hostname} · {networkDevice?.address}
+              </Typography>
+              {networkStatus ? (
+                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                  <Chip
+                    size="small"
+                    color={networkStatus.hotspot ? 'warning' : 'success'}
+                    label={networkStatus.hotspot ? `Setup hotspot: ${networkStatus.hotspot_ssid}` : `Wi-Fi: ${networkStatus.wifi.connection ?? 'disconnected'}`}
+                  />
+                  <Chip size="small" label={`Direct LAN: ${networkStatus.direct_lan_address}`} />
+                </Stack>
+              ) : null}
+              <Stack direction="row" spacing={2} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+                <Typography variant="subtitle2">Available networks</Typography>
+                <IconButton
+                  aria-label="Refresh Wi-Fi networks"
+                  disabled={networkLoading}
+                  onClick={() => void refreshWifiNetworks()}
+                >
+                  <RefreshCw size={18} />
+                </IconButton>
+              </Stack>
+              <List className="wifiNetworkList" disablePadding>
+                {wifiNetworks.map((network) => (
+                  <ListItemButton
+                    key={network.ssid}
+                    selected={wifiSsid === network.ssid}
+                    onClick={() => setWifiSsid(network.ssid)}
+                  >
+                    <ListItemIcon><Wifi size={18} /></ListItemIcon>
+                    <ListItemText primary={network.ssid} secondary={`${network.security} · ${network.signal}% signal`} />
+                    {network.connected ? <Chip size="small" color="success" label="Connected" /> : null}
+                  </ListItemButton>
+                ))}
+                {!wifiNetworks.length && !networkLoading ? (
+                  <Typography color="text.secondary" sx={{ p: 2 }}>No networks found. Enter the SSID manually.</Typography>
+                ) : null}
+              </List>
+              <TextField
+                required
+                label="Network name (SSID)"
+                value={wifiSsid}
+                onChange={(event) => setWifiSsid(event.target.value)}
+                slotProps={{ htmlInput: { maxLength: 32 } }}
+              />
+              <TextField
+                label="Wi-Fi password"
+                type={showWifiPassword ? 'text' : 'password'}
+                value={wifiPassword}
+                onChange={(event) => setWifiPassword(event.target.value)}
+                helperText="Leave empty only for an open network."
+                slotProps={{
+                  htmlInput: { minLength: wifiPassword ? 8 : undefined, maxLength: 63 },
+                  input: { endAdornment: (
+                    <InputAdornment position="end">
+                      <IconButton
+                        aria-label={showWifiPassword ? 'Hide Wi-Fi password' : 'Show Wi-Fi password'}
+                        onClick={() => setShowWifiPassword((current) => !current)}
+                        edge="end"
+                      >
+                        {showWifiPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </IconButton>
+                    </InputAdornment>
+                  ) },
+                }}
+              />
+              {networkLoading ? <LinearProgress /> : null}
+              {networkMessage ? <Alert severity={networkError ? 'error' : 'info'}>{networkMessage}</Alert> : null}
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setNetworkDevice(null)}>Close</Button>
+            <Button type="submit" variant="contained" disabled={networkLoading || !wifiSsid.trim()}>
+              Connect
+            </Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
     </Stack>
   )
 }
