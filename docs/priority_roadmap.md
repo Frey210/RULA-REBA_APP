@@ -2,6 +2,12 @@
 
 Dokumen ini menjadi urutan kerja utama setelah fondasi backend, Electron, dan edge device sudah berjalan. Roadmap ini sengaja memprioritaskan single-camera workflow yang stabil sebelum memperluas sistem ke cloud, multi-camera, atau enterprise features.
 
+Gate aktif per 24 Oktober 2026: [audit deteksi dan pencatatan](audit_detection_recording_2026-10-24.md).
+Temuan audit harus ditutup sebelum fitur berikutnya: validasi akses/perangkat dan
+lifecycle sesi, capture berlatensi terbatas, bukti/skor/durasi yang konsisten,
+stabilitas Re-ID, kemudian pengujian multi-kamera. Status fitur "implemented" di
+bawah menunjukkan fondasi tersedia, bukan bahwa gate ketahanan tersebut sudah lulus.
+
 ## Priority 0 - Stabilization Baseline
 
 Goal: memastikan fitur yang sudah ada tidak mudah rusak saat fitur baru ditambahkan.

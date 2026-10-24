@@ -2,6 +2,7 @@
 
 Dokumen utama untuk perencanaan produk:
 
+- [Audit deteksi dan pencatatan, 24 Oktober 2026](audit_detection_recording_2026-10-24.md) - temuan terverifikasi, rencana stabilisasi, dan gate penerimaan sebelum perluasan fitur.
 - `mvp_scope.md` - batas fitur MVP awal dan acceptance criteria.
 - `priority_roadmap.md` - urutan implementasi prioritas.
 - `future_features.md` - fitur post-MVP dan arah produk jangka panjang.
