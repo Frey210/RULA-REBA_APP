@@ -12,7 +12,9 @@ Pembaruan 0.2.1: [delivery lanjutan](stabilization_followup_2026-10-24.md).
 Workspace multi-kamera, laporan PDF/ZIP lengkap, diagnostik privat, pemisahan profil
 backend, dan clock sesi LAN tanpa internet sudah diimplementasikan. Validasi dua
 Pi fisik, 60 menit dengan beberapa worker, dan akurasi ergonomi referensi belum
-lulus; CAM_03 belum tersedia. Retensi destruktif otomatis sengaja nonaktif.
+lulus. CAM_03 kini terhubung dan agent sudah diupgrade, tetapi masih perlu
+pairing/uji sesi; lihat [deployment CAM_03](cam03_upgrade_2026-10-24.md).
+Retensi destruktif otomatis sengaja nonaktif.
 
 ## Priority 0 - Stabilization Baseline
 
