@@ -457,12 +457,104 @@
   border-radius: 8px;
 }
 
-.liveGrid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.85fr);
-  gap: 16px;
-  align-items: start;
+.assessmentWorkspace {
+  height: calc(100dvh - 120px);
+  min-height: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
+
+.assessmentControls {
+  flex-shrink: 0;
+  position: sticky;
+  top: 64px;
+  z-index: 10;
+  display: grid;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #dde2e4;
+  background: #f4f7f9;
+}
+
+.assessmentHeading,
+.sessionControlRow,
+.previewControlRow,
+.cameraPagination,
+.cameraTileHeader,
+.workerInspectorHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assessmentHeading,
+.workerInspectorHeading { justify-content: space-between; }
+.sessionControlRow,
+.previewControlRow { flex-wrap: wrap; }
+.sessionPicker { flex: 1; min-width: 220px; }
+.previewControlRow .MuiFormControlLabel-root { margin-left: 0; margin-right: 4px; }
+.wallSummary { margin-left: auto; }
+.cameraPagination { flex-shrink: 0; }
+
+.wallWorkspace { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; gap: 12px; }
+.wallWorkspace[data-inspector="true"] { grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); }
+.cameraWall {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.cameraWall[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
+.cameraWall[data-count="3"],
+.cameraWall[data-count="4"] { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.cameraTile {
+  display: grid;
+  grid-template-rows: 52px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #cdd7dd;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+.cameraTileHeader { padding: 6px 10px; gap: 4px; border-bottom: 1px solid #dde2e4; }
+.cameraTile[data-selected="true"] { border-color: #0077a8; }
+.cameraTileIdentity { flex: 1; min-width: 0; }
+.cameraTileIdentity .MuiTypography-caption { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cameraTileHeader .MuiIconButton-root { padding: 6px; }
+.cameraTileHeader > .MuiChip-root,
+.cameraTileHeader > .MuiIconButton-root { flex-shrink: 0; }
+.cameraTileHeader .MuiChip-root { font-size: 11px; height: 22px; }
+.cameraTile .livePreview { height: 100%; aspect-ratio: auto; border: 0; border-radius: 0; }
+.cameraTile .cameraPreview { height: 100%; aspect-ratio: auto; }
+.cameraTile .cameraStream { border-radius: 0; }
+.cameraPaused,
+.cameraWallEmpty { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; min-height: 0; }
+.cameraPaused { height: 100%; background: #12181b; color: #d8e1e6; }
+.cameraWallEmpty { border: 1px dashed #cdd7dd; }
+.sessionCameraChoices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; max-height: 320px; overflow: auto; padding-top: 8px; }
+.sessionCameraChoices .MuiFormControlLabel-root { margin: 0; min-width: 0; }
+.sessionCameraChoices .MuiFormControlLabel-label { min-width: 0; overflow-wrap: anywhere; }
+.workerInspectorPanel { min-height: 0; border: 1px solid #dde2e4; border-radius: 8px; background: #fff; overflow: hidden; }
+.workerInspector { height: 100%; padding: 12px; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.workerInspectorBody { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+.workerInspector .insightPanel { border: 0; border-radius: 0; padding: 0; min-height: 0; max-height: none; overflow: visible; }
+.workerInspector .workerCard { padding: 10px; gap: 6px; }
+.workerAssignmentRow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 0.85fr); gap: 12px; align-items: center; }
+.workerAssignmentRow > * { min-width: 0; }
+.workerInspector .workerCardHeader { align-items: start; gap: 6px; }
+.workerInspector .workerCardHeader > .MuiChip-root { display: none; }
+.workerInspector .workerCardStatus { display: block; min-height: 40px; line-height: 20px; }
+.workerInspector .workerScoreRow .MuiChip-root { font-size: 11px; height: 22px; }
+.workerMeasurements summary { cursor: pointer; font-size: 12px; line-height: 28px; color: #28566b; }
+.workerMeasurements summary:focus-visible { outline: 2px solid #0077a8; outline-offset: 2px; }
+.workerMeasurements .detailGrid,
+.workerMeasurements .angleGrid { margin-top: 8px; }
 
 .livePreview {
   width: 100%;
@@ -648,10 +740,6 @@
   }
 
   .analyticsGrid {
-    grid-template-columns: 1fr;
-  }
-
-  .liveGrid {
     grid-template-columns: 1fr;
   }
 

@@ -38,6 +38,13 @@ import {
   Activity,
   BarChart3,
   Camera,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
+  Minimize2,
+  Play,
+  Plus,
+  Square,
   ClipboardCheck,
   FileText,
   History,
@@ -757,23 +764,37 @@ function LiveAssessment({
   const [streamFps, setStreamFps] = useState<number | 'auto'>('auto')
   const [previewSettingsOpen, setPreviewSettingsOpen] = useState(false)
   const [streamCamId, setStreamCamId] = useState('')
+  const [focusedCamId, setFocusedCamId] = useState('')
+  const [cameraPage, setCameraPage] = useState(0)
+  const [insightsOpen, setInsightsOpen] = useState(false)
+  const [inspectorWorkerId, setInspectorWorkerId] = useState('')
+  const [newSessionOpen, setNewSessionOpen] = useState(false)
+  const [sessionError, setSessionError] = useState(false)
+  const [assigningWorkerId, setAssigningWorkerId] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const activeSession = sessions.find((session) => session.session_code === sessionCode)
-  const streamCamera = cameraNodes.find((node) => node.cam_id === streamCamId)
-    ?? findStreamCamera(activeSession, cameraNodes, selectedCamIds)
-  const latestEvent = events.find((event) => event.cam_id === streamCamera?.cam_id)
+  const sessionCameraIds = activeSession?.metadata_json.camera_node_ids ?? []
+  const wallCameras = sessionCameraIds.length ? cameraNodes.filter(camera => sessionCameraIds.includes(camera.cam_id)) : cameraNodes
+  const streamCamera = wallCameras.find(camera => camera.cam_id === streamCamId) ?? wallCameras[0]
+  const pageCount = Math.max(1, Math.ceil(wallCameras.length / 4))
+  const currentPage = Math.min(cameraPage, pageCount - 1)
+  const focusedCamera = wallCameras.find(camera => camera.cam_id === focusedCamId)
+  const visibleCameras = focusedCamera ? [focusedCamera] : wallCameras.slice(currentPage * 4, currentPage * 4 + 4)
+  const sessionBusy = Boolean(activeSession && ['running', 'preparing', 'stopping'].includes(activeSession.status))
+  const sessionRunning = activeSession?.status === 'running' || activeSession?.status === 'preparing'
+  const sessionCamerasReady = sessionCameraIds.length > 0 && wallCameras.length === sessionCameraIds.length && wallCameras.every(camera => camera.status === 'online' && camera.metadata_json.health?.camera_available)
   const insightRun = activeSession?.metadata_json.edge_runs?.[streamCamera?.cam_id ?? '']
   const visibleInsightSnapshots = (insightSnapshots[streamCamera?.cam_id ?? ''] ?? []).filter(row =>
     (row.session_id === activeSession?.session_code || row.session_id === activeSession?.id) && (!insightRun || row.run_id === insightRun))
-  const latestVisibleEvent = events.find(
-    (event) => event.cam_id === streamCamera?.cam_id && event.detections.length > 0 && now - event.timestamp <= 2_000,
-  )
-  const selectedSessionEdgeResults = activeSession?.metadata_json.edge_start_results ?? []
-  const activeWorkerCount = latestEvent && now - latestEvent.timestamp < 2000 ? latestEvent.detections.length : 0
-  const recentWorkerCount = new Set(events.flatMap((event) => event.detections.map((detection) => `${event.cam_id}/${event.run_id}/${detection.worker_id}`))).size
+  const selectedInspectorWorker = visibleInsightSnapshots.some(row => row.detection.worker_id === inspectorWorkerId) ? inspectorWorkerId : ''
+  const inspectorSnapshots = selectedInspectorWorker ? visibleInsightSnapshots.filter(row => row.detection.worker_id === selectedInspectorWorker) : visibleInsightSnapshots
+  const activeWorkerCount = wallCameras.reduce((total, camera) => {
+    const event = events.find(row => row.cam_id === camera.cam_id && (!activeSession?.metadata_json.edge_runs?.[camera.cam_id] || row.run_id === activeSession.metadata_json.edge_runs[camera.cam_id]))
+    return total + (event && insightIsLive(event.timestamp, now, connected, sessionRunning) ? event.detections.length : 0)
+  }, 0)
   const selectedCamerasReady = selectedCamIds.length > 0 && selectedCamIds.every((id) =>
-    cameraNodes.find((camera) => camera.cam_id === id)?.metadata_json.health?.camera_available)
+    cameraNodes.some(camera => camera.cam_id === id && camera.status === 'online' && camera.metadata_json.health?.camera_available))
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
@@ -789,6 +810,10 @@ function LiveAssessment({
   useEffect(() => {
     if (!sessionCode) return
     setInsightSnapshots({})
+    setCameraPage(0)
+    setFocusedCamId('')
+    setInsightsOpen(false)
+    setInspectorWorkerId('')
     let disposed = false
     let timer: ReturnType<typeof setTimeout>
     let ws: WebSocket
@@ -840,17 +865,22 @@ function LiveAssessment({
 
   async function assignWorker(sessionWorkerId: string, workerId: string | null) {
     if (!activeSession) return
-    const updated = await apiRequest<SessionWorkerRecord>(
-      `/api/v1/sessions/${activeSession.id}/workers/${sessionWorkerId}`,
-      {
-        method: 'PATCH',
-        body: JSON.stringify({ worker_id: workerId }),
-      },
-      token,
-    )
-    setSessionWorkers((current) =>
-      current.map((row) => row.id === updated.id ? updated : row),
-    )
+    setAssigningWorkerId(sessionWorkerId)
+    setSessionError(false)
+    setMessage(null)
+    try {
+      const updated = await apiRequest<SessionWorkerRecord>(
+        `/api/v1/sessions/${activeSession.id}/workers/${sessionWorkerId}`,
+        { method: 'PATCH', body: JSON.stringify({ worker_id: workerId }) },
+        token,
+      )
+      setSessionWorkers(current => current.map(row => row.id === updated.id ? updated : row))
+    } catch (err) {
+      setSessionError(true)
+      setMessage(err instanceof Error ? err.message : 'Worker assignment failed. Try again.')
+    } finally {
+      setAssigningWorkerId(null)
+    }
   }
 
   async function createAndStartSession() {
@@ -859,6 +889,7 @@ function LiveAssessment({
       return
     }
     setLoading(true)
+    setSessionError(false)
     setMessage(null)
     try {
       const session = await apiRequest<SessionRecord>(
@@ -878,10 +909,12 @@ function LiveAssessment({
         token,
       )
       setSessionCode(started.session_code)
+      setNewSessionOpen(false)
       setEvents([])
       setMessage('Session started. Waiting for edge detection events.')
       await refreshData()
     } catch (err) {
+      setSessionError(true)
       setMessage(err instanceof Error ? `Start session failed: ${err.message}` : 'Start session failed.')
     } finally {
       setLoading(false)
@@ -891,6 +924,7 @@ function LiveAssessment({
   async function startSelectedSession() {
     if (!activeSession) return
     setLoading(true)
+    setSessionError(false)
     setMessage(null)
     try {
       const started = await apiRequest<SessionRecord>(
@@ -903,6 +937,7 @@ function LiveAssessment({
       setMessage('Session started. Waiting for edge detection events.')
       await refreshData()
     } catch (err) {
+      setSessionError(true)
       setMessage(err instanceof Error ? `Start session failed: ${err.message}` : 'Start session failed.')
     } finally {
       setLoading(false)
@@ -912,6 +947,7 @@ function LiveAssessment({
   async function stopSelectedSession() {
     if (!activeSession) return
     setLoading(true)
+    setSessionError(false)
     setMessage(null)
     try {
       await apiRequest<SessionRecord>(
@@ -922,6 +958,7 @@ function LiveAssessment({
       setMessage('Session stopped.')
       await refreshData()
     } catch (err) {
+      setSessionError(true)
       setMessage(err instanceof Error ? `Stop session failed: ${err.message}` : 'Stop session failed.')
     } finally {
       setLoading(false)
@@ -934,153 +971,138 @@ function LiveAssessment({
     )
   }
 
+  function inspectCamera(camId: string) {
+    setInspectorWorkerId('')
+    setStreamCamId(camId)
+    setInsightsOpen(true)
+    setCameraPage(Math.floor(Math.max(0, wallCameras.findIndex(camera => camera.cam_id === camId)) / 4))
+    if (focusedCamera) setFocusedCamId(camId)
+  }
+
+  function goToCameraPage(page: number) {
+    setInspectorWorkerId('')
+    setCameraPage(page)
+    if (insightsOpen) setStreamCamId(wallCameras[page * 4]?.cam_id ?? '')
+  }
+
+  function openNewSession() {
+    setInsightsOpen(false)
+    setSelectedCamIds(cameraNodes.filter(camera => camera.status === 'online' && camera.metadata_json.health?.camera_available).map(camera => camera.cam_id))
+    setNotes('')
+    setMessage(null)
+    setSessionError(false)
+    setNewSessionOpen(true)
+  }
+
   return (
-    <Stack spacing={3}>
-      <PageTitle title="Live Assessment" action={<Chip label={connected ? 'Backend connected' : 'Backend reconnecting'} color={connected ? 'success' : 'warning'} />} />
-      <Paper className="panel" elevation={0}>
-        <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
-          <TextField
-            select
-            label="Session"
-            value={sessionCode}
-            onChange={(event) => {
-              setSessionCode(event.target.value)
-              setEvents([])
-            }}
-            sx={{ minWidth: 320 }}
-          >
-            {sessions.map((session) => (
-              <MenuItem key={session.id} value={session.session_code}>
-                {session.session_code} - {session.status}
-              </MenuItem>
-            ))}
-          </TextField>
-          <Button variant="contained" disabled={loading || !activeSession || activeSession.status === 'running'} onClick={startSelectedSession}>
-            Start Selected
-          </Button>
-          <Button color="error" variant="outlined" disabled={loading || !activeSession || !['running', 'preparing', 'stopping'].includes(activeSession.status)} onClick={stopSelectedSession}>
-            Stop
-          </Button>
-        </Stack>
-        {selectedSessionEdgeResults.length ? (
-          <Box className="pairingSteps" sx={{ mt: 2 }}>
-            {selectedSessionEdgeResults.map((result) => (
-              <Chip
-                key={`${result.cam_id}-${result.status}`}
-                size="small"
-                color={result.status === 'started' ? 'success' : result.status === 'error' ? 'error' : 'default'}
-                label={`${result.cam_id}: ${result.status}`}
-              />
-            ))}
-          </Box>
-        ) : null}
-        <Divider sx={{ my: 2 }} />
-        <Box className="metricGrid">
-          <Metric label="Live Events" value={events.length} icon={Activity} />
-          <Metric label="Latest Frame" value={latestEvent?.frame_id ?? 0} icon={Camera} />
-          <Metric label="People in Frame" value={activeWorkerCount} icon={ClipboardCheck} />
-          <Metric label="Recent Workers" value={recentWorkerCount} icon={BarChart3} />
+    <Box className="assessmentWorkspace">
+      <Box className="assessmentControls">
+        <Box className="assessmentHeading">
+          <Typography variant="h5">Live Assessment</Typography>
+          <Chip size="small" label={connected ? 'Backend connected' : sessionCode ? 'Backend reconnecting' : 'No session selected'} color={connected ? 'success' : sessionCode ? 'warning' : 'default'} />
         </Box>
-      </Paper>
-
-      <Paper className="panel" elevation={0}>
-        <Typography variant="h6">Start New Session</Typography>
-        <Divider sx={{ my: 2 }} />
-        <Stack spacing={2}>
-          <Box className="pairingSteps">
-            {cameraNodes.map((node) => {
-              const label = node.metadata_json.display_name ?? node.cam_id
-              const selected = selectedCamIds.includes(node.cam_id)
-              return (
-                <Chip
-                  key={node.id}
-                  clickable
-                  color={selected ? 'primary' : 'default'}
-                  label={`${label} (${formatMetricName(node.status)})`}
-                  onClick={() => toggleCamera(node.cam_id)}
-                />
-              )
-            })}
-          </Box>
-          <TextField label="Session notes" value={notes} onChange={(event) => setNotes(event.target.value)} />
-          <Button variant="contained" disabled={loading || !selectedCamerasReady} onClick={createAndStartSession}>
-            Create and Start Session
-          </Button>
-        </Stack>
-        {loading ? <LinearProgress sx={{ mt: 2 }} /> : null}
-        {message ? (
-          <Alert severity="info" sx={{ mt: 2 }}>
-            {message}
-          </Alert>
-        ) : null}
-      </Paper>
-
-      <Paper className="panel" elevation={0}>
-        <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 1 }}>
-          <Typography variant="h6">Live Stream</Typography>
-          <TextField select size="small" label="Camera" value={streamCamera?.cam_id ?? ''}
-            onChange={(event) => setStreamCamId(event.target.value)} sx={{ minWidth: 180 }}>
-            {cameraNodes.map((camera) => <MenuItem key={camera.id} value={camera.cam_id}>
-              {String(camera.metadata_json.display_name || camera.cam_id)}
+        <Box className="sessionControlRow">
+          <TextField select size="small" label="Session" value={activeSession ? sessionCode : ''} className="sessionPicker"
+            onChange={event => { setSessionCode(event.target.value); setEvents([]); setMessage(null) }}>
+            <MenuItem value="" disabled>{sessions.length ? 'Select session' : 'No sessions'}</MenuItem>
+            {sessions.map(session => <MenuItem key={session.id} value={session.session_code}>
+              {session.session_code} - {formatMetricName(session.status)}
             </MenuItem>)}
           </TextField>
-          <FormControlLabel
-            control={<Switch checked={showStream} onChange={(event) => setShowStream(event.target.checked)} />}
-            label="Camera"
-          />
-          <FormControlLabel
-            control={<Switch checked={showOverlay} onChange={(event) => setShowOverlay(event.target.checked)} />}
-            label="Overlay"
-          />
-          <Chip label={streamFps === 'auto' ? 'Preview: Auto' : `Preview: ${streamFps} FPS`} size="small" />
-          <Tooltip title="Preview settings">
-            <IconButton aria-label="Preview settings" aria-expanded={previewSettingsOpen}
-              onClick={() => setPreviewSettingsOpen((open) => !open)}><Settings size={20} /></IconButton>
-          </Tooltip>
-          {previewSettingsOpen ? <TextField
-            select
-            size="small"
-            label="Preview FPS"
-            value={streamFps}
-            onChange={(event) => setStreamFps(event.target.value === 'auto' ? 'auto' : Number(event.target.value))}
-            sx={{ width: 150 }}
-          >
-            <MenuItem value="auto">Auto</MenuItem>
-            <MenuItem value={4}>4</MenuItem>
-            <MenuItem value={8}>8</MenuItem>
-            <MenuItem value={12}>12</MenuItem>
-          </TextField> : null}
-        </Stack>
-        <Divider sx={{ my: 2 }} />
-        <Box className="liveGrid">
-          <Box className="livePreview">
-            {showStream && streamCamera ? (
-              <CameraPreview key={streamCamera.id} cameraId={streamCamera.id} label={streamCamera.cam_id} token={token}
-                fps={streamFps} overlay={showOverlay} />
-            ) : latestVisibleEvent?.detections.length ? (
-              <>
-                <Typography variant="h6">{latestVisibleEvent.detections.length} worker(s) detected</Typography>
-                <Typography>Latest frame: {latestVisibleEvent.frame_id}</Typography>
-              </>
-            ) : !streamCamera ? (
-              <Typography color="text.secondary">Pair a camera node with an edge stream URL to show live video.</Typography>
-            ) : (
-              <Typography color="text.secondary">Waiting for Raspberry Pi detection events.</Typography>
-            )}
-          </Box>
-          <DetectionInsights
-            snapshots={visibleInsightSnapshots}
-            now={now}
-            connected={connected}
-            running={activeSession?.status === 'running' || activeSession?.status === 'preparing'}
-            events={events.filter(event => event.cam_id === streamCamera?.cam_id)}
-            workers={workers}
-            sessionWorkers={sessionWorkers}
-            assignWorker={assignWorker}
-          />
+          <Button variant="contained" startIcon={<Play size={16} />} disabled={loading || !activeSession || !sessionCamerasReady || !['created', 'review_pending', 'failed'].includes(activeSession.status)} onClick={startSelectedSession}>Start session</Button>
+          <Button color="error" variant="outlined" startIcon={<Square size={16} />} disabled={loading || !sessionBusy} onClick={stopSelectedSession}>Stop session</Button>
+          <Button variant="outlined" startIcon={<Plus size={16} />} disabled={loading || sessionBusy || !cameraNodes.length} onClick={openNewSession}>New session</Button>
         </Box>
-      </Paper>
-    </Stack>
+        <Box className="previewControlRow">
+          <FormControlLabel control={<Switch size="small" checked={showStream} onChange={event => setShowStream(event.target.checked)} />} label="Video" />
+          <FormControlLabel control={<Switch size="small" checked={showOverlay} onChange={event => setShowOverlay(event.target.checked)} />} label="Overlay" />
+          <Chip label={streamFps === 'auto' ? 'Preview: Auto' : 'Preview: ' + streamFps + ' FPS'} size="small" />
+          <Tooltip title="Preview settings"><IconButton aria-label="Preview settings" aria-expanded={previewSettingsOpen}
+            onClick={() => setPreviewSettingsOpen(open => !open)}><Settings size={18} /></IconButton></Tooltip>
+          {previewSettingsOpen ? <TextField select size="small" label="Preview FPS" value={streamFps}
+            onChange={event => setStreamFps(event.target.value === 'auto' ? 'auto' : Number(event.target.value))} sx={{ width: 140 }}>
+            <MenuItem value="auto">Auto</MenuItem><MenuItem value={4}>4</MenuItem><MenuItem value={8}>8</MenuItem><MenuItem value={12}>12</MenuItem>
+          </TextField> : null}
+          <Typography variant="caption" className="wallSummary">{wallCameras.length} cameras / {activeWorkerCount} tracks visible</Typography>
+          {!focusedCamera && pageCount > 1 ? <Box className="cameraPagination">
+            <Tooltip title="Previous cameras"><span><IconButton aria-label="Previous cameras" disabled={currentPage === 0} onClick={() => goToCameraPage(currentPage - 1)}><ChevronLeft size={18} /></IconButton></span></Tooltip>
+            <Typography variant="caption">{currentPage + 1} / {pageCount}</Typography>
+            <Tooltip title="Next cameras"><span><IconButton aria-label="Next cameras" disabled={currentPage >= pageCount - 1} onClick={() => goToCameraPage(currentPage + 1)}><ChevronRight size={18} /></IconButton></span></Tooltip>
+          </Box> : null}
+        </Box>
+        {loading ? <LinearProgress /> : null}
+        {message ? <Alert severity={sessionError ? 'error' : 'info'} onClose={() => setMessage(null)}>{message}</Alert> : null}
+      </Box>
+
+      <Box className="wallWorkspace" data-inspector={insightsOpen && Boolean(streamCamera)}>
+      {visibleCameras.length ? <Box className="cameraWall" data-count={visibleCameras.length}>
+        {visibleCameras.map(camera => {
+          const label = String(camera.metadata_json.display_name || camera.cam_id)
+          const ready = camera.status === 'online' && camera.metadata_json.health?.camera_available
+          const latest = events.find(event => event.cam_id === camera.cam_id && (!activeSession?.metadata_json.edge_runs?.[camera.cam_id] || event.run_id === activeSession.metadata_json.edge_runs[camera.cam_id]))
+          const count = latest && insightIsLive(latest.timestamp, now, connected, sessionRunning) ? latest.detections.length : 0
+          return <Box component="article" className="cameraTile" data-selected={insightsOpen && streamCamera?.cam_id === camera.cam_id} key={camera.id} aria-label={camera.cam_id + ' camera'}>
+            <Box className="cameraTileHeader">
+              <Box className="cameraTileIdentity"><Typography variant="subtitle2" title={label} noWrap>{label}</Typography>
+                <Typography variant="caption" color="text.secondary">{camera.cam_id} / {count} visible</Typography></Box>
+              <Chip size="small" label={ready ? 'Ready' : camera.status === 'online' ? 'No camera' : 'Offline'} color={ready ? 'success' : 'default'} />
+              <Tooltip title="Assign workers"><IconButton aria-label={'Assign workers for ' + camera.cam_id} aria-controls="camera-worker-inspector" aria-expanded={insightsOpen && streamCamera?.cam_id === camera.cam_id} onClick={() => inspectCamera(camera.cam_id)}><UserRound size={18} /></IconButton></Tooltip>
+              <Tooltip title={focusedCamera ? 'Show all cameras' : 'Focus camera'}><IconButton aria-label={(focusedCamera ? 'Show all cameras from ' : 'Focus camera ') + camera.cam_id}
+                onClick={() => { setFocusedCamId(focusedCamera ? '' : camera.cam_id); if (insightsOpen) setStreamCamId(camera.cam_id) }}>{focusedCamera ? <Minimize2 size={18} /> : <Maximize2 size={18} />}</IconButton></Tooltip>
+            </Box>
+            <Box className="livePreview">
+              {showStream && camera.status === 'online' ? <CameraPreview cameraId={camera.id} label={camera.cam_id} token={token} fps={streamFps} overlay={showOverlay} />
+                : <Box className="cameraPaused"><Camera size={28} /><Typography variant="body2">{showStream ? 'Device offline' : 'Preview paused'}</Typography></Box>}
+            </Box>
+          </Box>
+        })}
+      </Box> : <Box className="cameraWallEmpty"><Camera size={32} /><Typography>No paired cameras</Typography>
+        <Button startIcon={<RefreshCw size={16} />} onClick={() => void refreshData()}>Refresh devices</Button></Box>}
+
+      {insightsOpen && streamCamera ? <Box component="aside" role="region" aria-label="Camera workers" className="workerInspectorPanel" id="camera-worker-inspector">
+        <Box className="workerInspector">
+          <Box className="workerInspectorHeading"><Typography variant="h6">Workers</Typography>
+            <Tooltip title="Close worker panel"><IconButton aria-label="Close worker panel" onClick={() => setInsightsOpen(false)}><X size={20} /></IconButton></Tooltip></Box>
+          <TextField autoFocus select size="small" label="Camera" value={streamCamera?.cam_id ?? ''} onChange={event => inspectCamera(event.target.value)}>
+            {wallCameras.map(camera => <MenuItem key={camera.id} value={camera.cam_id}>{String(camera.metadata_json.display_name || camera.cam_id)}</MenuItem>)}
+          </TextField>
+          <TextField select size="small" label="Worker" value={selectedInspectorWorker} disabled={!visibleInsightSnapshots.length} onChange={event => setInspectorWorkerId(event.target.value)}>
+            <MenuItem value="">All workers ({visibleInsightSnapshots.length})</MenuItem>
+            {visibleInsightSnapshots.map(row => {
+              const worker = sessionWorkers.find(worker => worker.edge_worker_id === row.detection.worker_id && worker.run_id === row.run_id)
+              return <MenuItem key={row.detection.worker_id} value={row.detection.worker_id}>
+                {worker?.worker_name ? worker.worker_name + ' / ' : ''}{row.detection.worker_id}
+              </MenuItem>
+            })}
+          </TextField>
+          {sessionError && message ? <Alert severity="error" onClose={() => setMessage(null)}>{message}</Alert> : null}
+          <Box className="workerInspectorBody">
+            <DetectionInsights snapshots={inspectorSnapshots} now={now} connected={connected} running={sessionRunning}
+              workers={workers} sessionWorkers={sessionWorkers} assignWorker={assignWorker} assigningWorkerId={assigningWorkerId} />
+          </Box>
+        </Box>
+      </Box> : null}
+      </Box>
+      <Dialog open={newSessionOpen} onClose={() => { if (!loading) setNewSessionOpen(false) }} fullWidth maxWidth="sm">
+        <DialogTitle>New assessment session</DialogTitle>
+        <DialogContent>
+          <Box className="sessionCameraChoices">
+            {cameraNodes.map(camera => <FormControlLabel key={camera.id}
+              control={<Checkbox checked={selectedCamIds.includes(camera.cam_id)} disabled={loading || camera.status !== 'online' || !camera.metadata_json.health?.camera_available} onChange={() => toggleCamera(camera.cam_id)} />}
+              label={<Box><Typography variant="body2">{String(camera.metadata_json.display_name || camera.cam_id)}</Typography>
+                <Typography variant="caption" color="text.secondary">{camera.cam_id} / {camera.status === 'online' && camera.metadata_json.health?.camera_available ? 'Camera ready' : 'Unavailable'}</Typography></Box>} />)}
+          </Box>
+          <TextField label="Session notes" value={notes} onChange={event => setNotes(event.target.value)} fullWidth multiline minRows={2} disabled={loading} sx={{ mt: 2 }} />
+          {sessionError && message ? <Alert severity="error" sx={{ mt: 2 }}>{message}</Alert> : null}
+          {loading ? <LinearProgress sx={{ mt: 2 }} /> : null}
+        </DialogContent>
+        <DialogActions><Button disabled={loading} onClick={() => setNewSessionOpen(false)}>Cancel</Button>
+          <Button variant="contained" startIcon={<Play size={16} />} disabled={loading || !selectedCamerasReady} onClick={createAndStartSession}>
+            {loading ? 'Starting...' : 'Start session'}
+          </Button></DialogActions>
+      </Dialog>
+
+    </Box>
   )
 }
 
@@ -1089,19 +1111,19 @@ function DetectionInsights({
   now,
   connected,
   running,
-  events,
   workers,
   sessionWorkers,
   assignWorker,
+  assigningWorkerId,
 }: {
   snapshots: WorkerInsightSnapshot[]
   now: number
   connected: boolean
   running: boolean
-  events: LiveDetectionEvent[]
   workers: WorkerRecord[]
   sessionWorkers: SessionWorkerRecord[]
   assignWorker: (sessionWorkerId: string, workerId: string | null) => Promise<void>
+  assigningWorkerId: string | null
 }) {
   if (!snapshots.length) {
     return (
@@ -1137,25 +1159,11 @@ function DetectionInsights({
             workers={workers}
             sessionWorker={sessionWorkers.find((worker) => worker.edge_worker_id === row.detection.worker_id && worker.run_id === row.run_id)}
             assignWorker={assignWorker}
+            assigningWorkerId={assigningWorkerId}
           />
         ))}
       </Box>
 
-      <Divider />
-      <Typography variant="subtitle2">Recent Events</Typography>
-      <Box className="eventList">
-        {events.slice(0, 8).map((event) => (
-          <Box className="eventItem" key={`${event.frame_id}-${event.timestamp}`}>
-            <Box>
-              <Typography sx={{ fontWeight: 700 }}>Frame {event.frame_id}</Typography>
-              <Typography variant="caption" color="text.secondary">
-                {event.detections.length} worker(s) - {formatTimestamp(event.timestamp)}
-              </Typography>
-            </Box>
-            <Chip size="small" label={event.cam_id} />
-          </Box>
-        ))}
-      </Box>
     </Box>
   )
 }
@@ -1168,6 +1176,7 @@ function WorkerInsightCard({
   workers,
   sessionWorker,
   assignWorker,
+  assigningWorkerId,
 }: {
   detection: LiveDetection
   isLive: boolean
@@ -1176,6 +1185,7 @@ function WorkerInsightCard({
   workers: WorkerRecord[]
   sessionWorker?: SessionWorkerRecord
   assignWorker: (sessionWorkerId: string, workerId: string | null) => Promise<void>
+  assigningWorkerId: string | null
 }) {
   const rula = readRiskScore(detection.metadata?.rula)
   const reba = readRiskScore(detection.metadata?.reba)
@@ -1185,7 +1195,9 @@ function WorkerInsightCard({
   const keypointCount = detection.keypoints?.points.length ?? 0
   const bbox = detection.bbox.map((value) => Math.round(value))
   return (
-    <Box className="workerCard">
+    <Box className="workerCard" role="group" aria-label={detection.worker_id + ' worker'}>
+      <Box className="workerAssignmentRow">
+      <Box>
       <Box className="workerCardHeader">
         <Box>
           <Typography variant="caption" color="text.secondary">
@@ -1206,12 +1218,13 @@ function WorkerInsightCard({
       <Typography className="workerCardStatus" variant="caption" color="text.secondary" sx={{ minHeight: 20 }}>
         {isLive ? 'Live measurements' : `Last seen ${Math.max(0, Math.floor((now - lastSeenAt) / 1000))}s ago / not live`}
       </Typography>
+      </Box>
       <TextField
         select
         size="small"
         label="Assign worker"
         value={sessionWorker?.worker_id ?? ''}
-        disabled={!sessionWorker}
+        disabled={!sessionWorker || assigningWorkerId !== null}
         onChange={(event) => {
           if (sessionWorker) {
             void assignWorker(sessionWorker.id, event.target.value || null)
@@ -1225,6 +1238,8 @@ function WorkerInsightCard({
           </MenuItem>
         ))}
       </TextField>
+      </Box>
+      <Box sx={{ height: 2 }}>{sessionWorker && assigningWorkerId === sessionWorker.id ? <LinearProgress /> : null}</Box>
 
       <Box className="workerScoreRow">
         <Chip size="small" label={`RULA ${rula.score} ${rula.risk}`} color={riskColor(rula.risk)} />
@@ -1233,6 +1248,8 @@ function WorkerInsightCard({
         <Chip size="small" variant="outlined" label={`Identity ${identityStatus}`} />
       </Box>
 
+      <details className="workerMeasurements">
+      <summary>Measurements</summary>
       <Box className="detailGrid">
         <InsightValue label="Confidence" value={formatPercent(detection.confidence)} />
         <InsightValue label="Re-ID" value={formatPercent(detection.reid_confidence)} />
@@ -1247,6 +1264,7 @@ function WorkerInsightCard({
         <InsightValue label="Elbow" value={formatAngle(maxAngle(angles.la_l, angles.la_r))} />
         <InsightValue label="Knee" value={formatAngle(maxAngle(angles.leg_l, angles.leg_r))} />
       </Box>
+      </details>
     </Box>
   )
 }
@@ -1311,10 +1329,6 @@ function formatPercent(value?: number): string {
   return `${Math.round(value * 100)}%`
 }
 
-function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
 function formatDateTime(timestamp: string): string {
   return new Date(timestamp).toLocaleString([], {
     hour: '2-digit',
@@ -1346,18 +1360,6 @@ function severityColor(severity: string): 'default' | 'success' | 'warning' | 'e
   if (severity === 'high') return 'warning'
   if (severity === 'low') return 'success'
   return 'default'
-}
-
-function findStreamCamera(
-  activeSession: SessionRecord | undefined,
-  cameraNodes: CameraNode[],
-  selectedCamIds: string[],
-): CameraNode | undefined {
-  const sessionCamIds = activeSession?.metadata_json.camera_node_ids ?? []
-  const preferredIds = sessionCamIds.length ? sessionCamIds : selectedCamIds
-  return preferredIds
-    .map((camId) => cameraNodes.find((node) => node.cam_id === camId))
-    .find((node): node is CameraNode => Boolean(node?.metadata_json.edge_base_url))
 }
 
 function WorkerRegistry({

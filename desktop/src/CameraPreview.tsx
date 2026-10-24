@@ -69,6 +69,7 @@ export function CameraPreview({ cameraId, label, token, fps, overlay }: {
       bgcolor: 'rgba(0,0,0,0.8)', color: '#fff', px: 1, py: 0.25, fontSize: 12, borderRadius: 1 }}>
       {fps === 'auto' ? 'Auto' : 'Preview'} / {actualFps.toFixed(1)} FPS
     </Typography> : null}
-    {error ? <Alert severity="warning" role="status" sx={{ position: 'absolute', bottom: 12, left: 12, right: 12 }}>{error}</Alert> : null}
+    {error ? <Alert severity="warning" role="status" sx={{ position: 'absolute', bottom: 12, left: 12, right: 12,
+      maxHeight: 'calc(100% - 24px)', overflowY: 'auto', fontSize: 12 }}>{error}</Alert> : null}
   </Box>
 }

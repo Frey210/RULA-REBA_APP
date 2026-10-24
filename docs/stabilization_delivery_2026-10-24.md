@@ -169,6 +169,35 @@ akurasi skor ergonomi. Mulai dengan satu worker dan satu kamera.
 
 ### Validasi Hardware
 
+#### Workspace Multi-Kamera
+
+Live Assessment sekarang memakai toolbar sesi ringkas dan camera wall di dalam
+viewport desktop. Maksimal empat preview tampil bersamaan, otomatis satu atau dua
+kolom sesuai jumlah kamera. Kamera kelima dan seterusnya berada pada halaman
+berikutnya; ikon focus memperbesar satu kamera dan dapat dikembalikan ke grid.
+Gambar memakai object-fit contain agar rasio sumber dipertahankan tanpa crop.
+
+Start session dan Stop session tetap mengendalikan seluruh sesi/kamera terpilih,
+bukan satu kamera secara terpisah. New session membuka pemilihan kamera serta
+catatan; kamera offline/tidak siap tidak dapat dipilih. Video hanya menghentikan
+permintaan preview. Pergantian halaman/focus tidak menghentikan inferensi atau
+pencatatan kamera sesi yang tidak sedang ditampilkan.
+
+Ikon worker di tiap kartu membuka panel samping. Kamera dan worker dapat dipilih
+langsung tanpa scroll halaman. Daftar worker memiliki scroll lokal; Measurements
+dibuka hanya ketika diperlukan. Assignment memperlihatkan proses penyimpanan dan
+error yang bisa dicoba ulang, tanpa mengubah identitas pada kamera lain. Panel
+tidak menutupi toolbar Stop session. Ukuran kamera hanya berubah saat operator
+membuka panel, memilih focus, mengganti halaman, atau mengubah ukuran jendela;
+kemunculan/hilangnya deteksi tidak mengubah grid.
+
+Regresi browser mencakup 1/2/4 kamera, paging enam kamera, viewport 1120x720 dan
+1440x900, source gagal/pulih, start/stop, kamera offline, assignment gagal/pulih,
+ID lokal yang sama lintas kamera, serta pemilihan track langsung. Tes memakai
+endpoint dan gambar sintetis, bukan bukti kapasitas empat Pi fisik. Installer lama
+belum memuat workspace ini; gunakan source terbaru. Uji multi-Pi fisik dan sesi
+panjang tetap merupakan gate terpisah.
+
 #### Ukuran Preview Stabil
 
 Grid preview diperbaiki agar isi Detection Insights tidak mengubah lebar/tinggi
