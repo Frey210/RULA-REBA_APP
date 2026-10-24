@@ -71,9 +71,11 @@ pairing yang tidak cocok. Pairing tidak melewati keamanan untuk mendukung agent 
 
 ## Deploy Raspberry Pi Secara Manual
 
-Deploy SSH otomatis pada sesi ini ditolak peninjauan otomatis dengan keterangan
-`blocked by policy`; perintah tidak dijalankan. Raspberry Pi masih memakai versi
-sebelumnya. Tidak ada perubahan kernel, EEPROM, atau boot order dalam rilis ini.
+Percobaan awal deploy SSH otomatis ditolak peninjauan otomatis dengan keterangan
+`blocked by policy`; perintah tersebut tidak dijalankan. Pengguna kemudian berhasil
+deploy manual CAM_02 melalui git bundle sampai `9cb9950`. Langkah berikut tetap
+menjadi panduan untuk perangkat lain. Tidak ada perubahan kernel, EEPROM, atau
+boot order dalam rilis ini.
 
 1. Stop sesi aktif dari aplikasi lama. Tutup aplikasi sebelum mengganti backend.
 2. Masuk ke Pi yang benar. Untuk kabel langsung:
@@ -132,9 +134,33 @@ eksplisit; tidak disediakan bypass autentikasi otomatis.
 
 ## Gate yang Masih Terbuka
 
-- Pipeline Hailo pada hardware belum diuji dengan kode rilis ini karena deploy
-  diblokir. Validasi kompatibilitas source caps, frame age, dan hand inference
-  diperlukan segera setelah deploy manual.
+### Preview Auto dan Tes Gerakan
+
+Perubahan desktop berikutnya menjadikan Auto sebagai default preview. Laju polling
+diperkirakan dari respons jaringan dan pengulangan byte gambar, bukan FPS nominal
+kamera. Batas Auto 4-12 request/detik sebelum memperhitungkan jaringan yang lambat.
+Hanya satu request aktif per preview; durasi request sudah dihitung dalam interval.
+Gambar identik tidak dirender ulang. Indikator FPS menghitung frame berbeda yang
+diterima preview, bukan FPS inferensi atau jaminan refresh layar.
+
+Ikon Preview settings membuka batas manual 4/8/12 atau Auto. Pengaturan ini tidak
+mengubah kamera, pose inference, maupun frekuensi pencatatan. Tidak perlu deploy
+ulang Pi untuk perubahan ini. Installer 0.2.0 pada folder pairing di atas dibuat
+sebelum perubahan Auto; gunakan source terbaru untuk pengujian ini.
+
+Untuk tes aktual, buka Live Assessment, pilih CAM_02, tunggu Camera Ready, lalu
+mulai sesi. Berdiri dengan tubuh terlihat penuh; gerakkan tangan dan badan,
+kemudian berhenti mendadak untuk membandingkan gerakan dan preview. Ulangi setelah
+5-10 menit, lalu Stop dan periksa sumber snapshot di Session Review. Catat FPS
+preview serta apakah delay bertambah; jangan gunakan hasil ini sebagai validasi
+akurasi skor ergonomi. Mulai dengan satu worker dan satu kamera.
+
+### Validasi Hardware
+
+- Deploy manual CAM_02 sampai commit `9cb9950` sudah dikonfirmasi melalui output
+  pengguna. Pemeriksaan LAN mengonfirmasi device_id tersedia dan kontrol tanpa
+  kredensial ditolak 403. Pipeline Hailo saat sesi belum diuji dengan kode rilis
+  ini; validasi source caps, frame age, dan hand inference masih diperlukan.
 - Uji 60 menit dan target latency audit belum terbukti. Jalankan satu kamera dahulu,
   1-3 worker, kemudian dua Pi. Catat apakah frame age dan pemakaian memori stabil.
 - Belum ada klaim akurasi identitas otomatis untuk semua occlusion, pakaian serupa,

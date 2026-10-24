@@ -30,6 +30,7 @@ import {
   TextField,
   ThemeProvider,
   Toolbar,
+  Tooltip,
   Typography,
   createTheme,
 } from '@mui/material'
@@ -773,7 +774,8 @@ function LiveAssessment({
   const [message, setMessage] = useState<string | null>(null)
   const [showStream, setShowStream] = useState(true)
   const [showOverlay, setShowOverlay] = useState(true)
-  const [streamFps, setStreamFps] = useState(8)
+  const [streamFps, setStreamFps] = useState<number | 'auto'>('auto')
+  const [previewSettingsOpen, setPreviewSettingsOpen] = useState(false)
   const [streamCamId, setStreamCamId] = useState('')
   const [now, setNow] = useState(() => Date.now())
 
@@ -1043,18 +1045,24 @@ function LiveAssessment({
             control={<Switch checked={showOverlay} onChange={(event) => setShowOverlay(event.target.checked)} />}
             label="Overlay"
           />
-          <TextField
+          <Chip label={streamFps === 'auto' ? 'Preview: Auto' : `Preview: ${streamFps} FPS`} size="small" />
+          <Tooltip title="Preview settings">
+            <IconButton aria-label="Preview settings" aria-expanded={previewSettingsOpen}
+              onClick={() => setPreviewSettingsOpen((open) => !open)}><Settings size={20} /></IconButton>
+          </Tooltip>
+          {previewSettingsOpen ? <TextField
             select
             size="small"
-            label="FPS"
+            label="Preview FPS"
             value={streamFps}
-            onChange={(event) => setStreamFps(Number(event.target.value))}
-            sx={{ width: 110 }}
+            onChange={(event) => setStreamFps(event.target.value === 'auto' ? 'auto' : Number(event.target.value))}
+            sx={{ width: 150 }}
           >
+            <MenuItem value="auto">Auto</MenuItem>
             <MenuItem value={4}>4</MenuItem>
             <MenuItem value={8}>8</MenuItem>
             <MenuItem value={12}>12</MenuItem>
-          </TextField>
+          </TextField> : null}
         </Stack>
         <Divider sx={{ my: 2 }} />
         <Box className="liveGrid">
