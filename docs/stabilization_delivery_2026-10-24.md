@@ -136,6 +136,18 @@ eksplisit; tidak disediakan bypass autentikasi otomatis.
 
 ### Preview Auto dan Tes Gerakan
 
+Perhatikan profil backend saat menguji source: default launcher development memakai
+`backend/dev_server.sqlite3`, sedangkan installer memakai
+`%APPDATA%/ergosight-desktop/ergosight.sqlite3`. Keduanya tidak berbagi akun maupun
+kredensial pairing. Untuk tes source dengan perangkat yang sudah dipair installer,
+backend harus memakai database, `.jwt-secret`, dan media dari profil installer yang
+sama melalui `ERGOQUIPT_DATABASE_URL`, `JWT_SECRET_KEY`, dan `MEDIA_ROOT`. Jangan
+menghapus state Pi atau mencoba pairing ke database development kosong. Setelah
+berganti profil backend, reload Electron dan login kembali dengan akun profil itu.
+
+Pada pemeriksaan setelah peralihan profil, CAM_02 terverifikasi online dan
+`camera_available: true`; inferensi masih idle sebelum pengguna memulai sesi.
+
 Perubahan desktop berikutnya menjadikan Auto sebagai default preview. Laju polling
 diperkirakan dari respons jaringan dan pengulangan byte gambar, bukan FPS nominal
 kamera. Batas Auto 4-12 request/detik sebelum memperhitungkan jaringan yang lambat.
