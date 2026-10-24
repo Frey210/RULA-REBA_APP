@@ -16,6 +16,10 @@ lulus. CAM_03 kini terhubung dan agent sudah diupgrade, tetapi masih perlu
 pairing/uji sesi; lihat [deployment CAM_03](cam03_upgrade_2026-10-24.md).
 Retensi destruktif otomatis sengaja nonaktif.
 
+CAM_01 juga telah diupgrade ke agent fbd2b4e. Pairing legacy belum memiliki
+kredensial kontrol baru; perlu Pair ulang melalui akun pemilik tanpa menghapus
+record kamera. Lihat [deployment CAM_01](cam01_upgrade_2026-10-24.md).
+
 ## Priority 0 - Stabilization Baseline
 
 Goal: memastikan fitur yang sudah ada tidak mudah rusak saat fitur baru ditambahkan.
