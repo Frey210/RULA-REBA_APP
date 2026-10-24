@@ -169,6 +169,27 @@ akurasi skor ergonomi. Mulai dengan satu worker dan satu kamera.
 
 ### Validasi Hardware
 
+#### Uji Sesi Aktual CAM_02
+
+- Sesi `SESSION_20261024_004` berhasil menjalankan pipeline. Awalnya ingest ditolak:
+  jam Pi berada pada 27 September, laptop 24 Oktober, dan NTP Pi belum sinkron.
+  Jam UTC Pi dikoreksi dari laptop melalui SSH terverifikasi; validasi stale frame
+  backend tetap aktif. Setelah koreksi, deteksi mulai tersimpan.
+- Dua belas sampel selama sekitar 22 detik tetap running/ready. Umur frame sumber
+  133-371 ms tanpa tren meningkat; RSS proses sekitar 235 MiB. Ini bukan uji leak
+  durasi panjang atau pengukuran latency layar.
+- Pengguna melaporkan Preview Auto sekitar 4 FPS saat berada di depan kamera,
+  video terus berjalan dan mengikuti gerakan, bukan memutar gerakan lama.
+- `REID_0002` stabil selama jendela sampel, tetapi kemudian muncul ID 3/4/5.
+  Interval antar deteksi ID berbeda sekitar 13-26 detik, sedangkan konfigurasi
+  perangkat `EDGE_REID_TTL_SECONDS=10`. Identitas setelah jeda belum dinyatakan
+  lulus. Jeda deteksi belum tentu berarti pekerja benar-benar keluar kamera.
+- Snapshot sesi berstatus ready. Review visual dan akurasi sudut tetap perlu diuji.
+- Bagian sesi sebelum koreksi jam tidak diterima backend; jangan menganggap
+  durasi tersebut sebagai exposure tercatat. Koreksi jam manual belum menyelesaikan
+  sinkronisasi otomatis untuk perangkat LAN tanpa internet; ini menjadi gate MVP
+  sebelum operasi tanpa bantuan IT.
+
 - Deploy manual CAM_02 sampai commit `9cb9950` sudah dikonfirmasi melalui output
   pengguna. Pemeriksaan LAN mengonfirmasi device_id tersedia dan kontrol tanpa
   kredensial ditolak 403.
