@@ -162,9 +162,13 @@ async page => {
   await row.getByText('Confidence', { exact: true }).waitFor();
   const geometry = await page.locator('.cameraTile').evaluateAll(tiles => tiles.map(tile => {
     const box = tile.getBoundingClientRect(), title = tile.querySelector('.cameraTileIdentity').getBoundingClientRect();
-    return { camera: tile.getAttribute('aria-label'), left: box.left, titleLeft: title.left, titleWidth: title.width, scrollLeft: tile.scrollLeft };
+    const text = tile.querySelector('.cameraTileIdentity .MuiTypography-root');
+    const range = document.createRange(); range.selectNodeContents(text);
+    return { camera: tile.getAttribute('aria-label'), left: box.left, titleLeft: title.left, titleWidth: title.width, scrollLeft: tile.scrollLeft,
+      titleText: text.textContent, textLeft: range.getBoundingClientRect().left, textColor: getComputedStyle(text).color,
+      textScrollLeft: text.scrollLeft };
   }));
-  if (geometry.some(row => row.titleWidth < 24 || row.titleLeft < row.left)) throw new Error('Camera title clipped: ' + JSON.stringify(geometry));
+  if (geometry.some(row => row.titleWidth < 24 || row.titleLeft < row.left || !row.titleText.trim() || row.textLeft < row.titleLeft || row.textScrollLeft !== 0)) throw new Error('Camera title clipped: ' + JSON.stringify(geometry));
   await page.screenshot({ path: 'tmp/camera-wall-inspector.png', fullPage: true });
   await page.getByRole('button', { name: 'Stop session', exact: true }).click();
   await page.getByText('Session stopped.', { exact: true }).waitFor();
@@ -187,5 +191,5 @@ async page => {
   if (!newSession || newSession.metadata_json.camera_node_ids.length !== 5 || newSession.metadata_json.camera_node_ids.includes('CAM_06')) throw new Error('New session selection incorrect');
   if (errors.length) throw new Error(errors.join('; '));
   await page.goto('about:blank');
-  return { layouts: results, assignmentScope: patchPath, errorRecovery: true, startStop: true, pagination: true, focus: true };
+  return { layouts: results, cameraHeaders: geometry, assignmentScope: patchPath, errorRecovery: true, startStop: true, pagination: true, focus: true };
 }
