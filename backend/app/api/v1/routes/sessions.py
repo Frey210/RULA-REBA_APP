@@ -109,6 +109,7 @@ def delete_session(
             *(snapshot.thumbnail_path for snapshot in snapshots),
             *(report.file_path for report in reports),
             *((report.metadata_json or {}).get("archive_path") for report in reports),
+            *((report.metadata_json or {}).get("excel_path") for report in reports),
         )
         if path
     ]

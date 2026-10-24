@@ -40,13 +40,15 @@ try {
     $report = Invoke-RestMethod "$base/api/v1/reports/sessions/$($session.id)" -Method Post -Headers $headers
     $pdf = Invoke-WebRequest "$base$($report.download_url)" -Headers $headers -UseBasicParsing
     $zip = Invoke-WebRequest "$base$($report.archive_url)" -Headers $headers -UseBasicParsing
+    $excel = Invoke-WebRequest "$base$($report.excel_url)" -Headers $headers -UseBasicParsing
+    if ($excel.Headers['Content-Type'] -notmatch 'spreadsheetml.sheet') { throw 'Bundled Excel report failed.' }
     if ($pdf.Headers['Content-Type'] -notmatch 'application/pdf' -or $zip.Headers['Content-Type'] -notmatch 'application/zip') {
         throw 'Bundled report or documentation archive failed.'
     }
     $diagnostics = Invoke-WebRequest "$base/api/v1/diagnostics" -Headers $headers -UseBasicParsing
     if ($diagnostics.Headers['Content-Type'] -notmatch 'application/zip') { throw 'Bundled diagnostics failed.' }
 
-    Write-Output 'Packaged backend migration, authentication, PDF/fonts/logo, documentation ZIP and diagnostics passed.'
+    Write-Output 'Packaged backend migration, authentication, PDF/fonts/logo, Excel, documentation ZIP and diagnostics passed.'
 }
 finally {
     if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }

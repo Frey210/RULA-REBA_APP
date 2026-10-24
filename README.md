@@ -14,9 +14,9 @@ Rebuild both PDFs with `py -3.12 scripts\generate_product_docs.py`.
 
 ## Current Status
 
-Version 0.2.1 includes authenticated pairing, multi-camera live workspace, scoped
+Version 0.2.2 includes authenticated pairing, multi-camera live workspace, scoped
 worker assignment, provisional scoring, evidence-backed manual review, complete
-PDF/ZIP documentation and private diagnostic export. Physical multi-Pi, 60-minute
+PDF/Excel/ZIP documentation and private diagnostic export. Physical multi-Pi, 60-minute
 load and reference ergonomic accuracy tests are still release gates. See
 [stabilization delivery](docs/stabilization_delivery_2026-10-24.md).
 
@@ -72,8 +72,8 @@ Build the complete Windows installer from the `desktop` directory:
 npm.cmd run dist:win
 ```
 
-The default output is `desktop\installer\ERGoSIGHT-Setup-0.2.1.exe`. The tested
-delivery build is under `desktop\installer\stabilization-0.2.1\`. It bundles
+The default output is `desktop\installer\ERGoSIGHT-Setup-0.2.2.exe`. The current
+delivery build is under `desktop\installer\reports-0.2.2\`. It bundles
 Electron and FastAPI, applies migrations, creates shortcuts and a private-network
 firewall rule. Normal installations require neither Python nor Node.js. Installer
 execution/upgrade on a clean second laptop remains to be verified.
@@ -86,13 +86,23 @@ under `%APPDATA%\ergosight-desktop`. Uninstalling/upgrading preserves this direc
 Stop a session, finish its review as appropriate, then open Reports and select
 Generate Report. PDF contains all observation/risk events, provisional and reviewed
 assessments, manual inputs/component breakdowns, measurements, worker/camera scope,
-and documentation photos. Missing or unverified information remains explicitly
+and documentation photos. Version 0.2.2 separates the summary, each event/review,
+photo pages and technical reference appendix with fixed leading and wrapping.
+Missing or unverified information remains explicitly
 marked. ZIP + Photos includes the same PDF, original available photos, CSV samples,
 and a checksum/provenance manifest. Registry reference photos are labelled as
 identity references, not posture evidence. Older reports are never overwritten.
 
 Reports contain personal data. Downloads require the owning account; share exported
-files only with authorized recipients. Devices > Diagnostics exports a separate
+files only with authorized recipients. Download PDF, Download Excel and Download
+ZIP are shown directly below Generate Report and on each report row. Older reports
+without a format keep that button disabled; generate a new report for the session
+to enable it. Excel includes filterable worker/event/review tables, representative
+source measurements, review details, embedded photos and technical references.
+All raw samples remain in the ZIP CSV. Excel is not required to generate files.
+See [report export delivery](docs/report_exports_2026-10-24.md).
+
+Devices > Diagnostics exports a separate
 support ZIP without credentials, account details, raw logs, or photos. Automatic
 raw-data deletion is disabled; use History to explicitly delete an unwanted stopped
 session after exporting its documentation if needed.

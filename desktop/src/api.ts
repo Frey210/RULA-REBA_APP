@@ -216,6 +216,7 @@ export type ReportRecord = {
   }
   download_url: string | null
   archive_url?: string | null
+  excel_url?: string | null
 }
 
 export type EventReviewRecord = {

@@ -98,7 +98,22 @@ def _report_read(report: Report) -> ReportRead:
         status=report.status,
         generated_by=report.generated_by,
         generated_at=report.generated_at,
-        metadata_json={key: value for key, value in (report.metadata_json or {}).items() if key != "archive_path"},
+        metadata_json={key: value for key, value in (report.metadata_json or {}).items() if key not in {"archive_path", "excel_path"}},
         download_url=f"/api/v1/reports/{report.id}/content" if report.status == "ready" else None,
         archive_url=f"/api/v1/reports/{report.id}/archive" if report.status == "ready" and (report.metadata_json or {}).get("archive_path") else None,
+        excel_url=f"/api/v1/reports/{report.id}/excel" if report.status == "ready" and (report.metadata_json or {}).get("excel_path") else None,
     )
+
+
+@router.get("/{report_id}/excel")
+def download_excel(report_id: str, current_user: Annotated[User, Depends(get_current_user)],
+                   db: Annotated[DbSession, Depends(get_db)]) -> FileResponse:
+    report = db.get(Report, report_id)
+    if report is None or report.owner_user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        path = media_path((report.metadata_json or {}).get("excel_path") or "")
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Excel report not found. Generate a new report for this session.")
+    return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        filename=f"{report.id}_report.xlsx", headers={"Cache-Control": "private, no-store"})

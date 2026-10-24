@@ -48,6 +48,7 @@ import {
   ClipboardCheck,
   FileText,
   FileArchive,
+  FileSpreadsheet,
   History,
   Download,
   Eye,
@@ -2838,6 +2839,7 @@ function ReportsPage({
   const [message, setMessage] = useState<string | null>(null)
 
   const selectedSession = sessions.find((session) => session.id === selectedSessionId)
+  const selectedReport = reports.find((report) => report.session_id === selectedSessionId)
 
   const loadReports = useCallback(async () => {
     setLoading(true)
@@ -2873,7 +2875,7 @@ function ReportsPage({
         token,
       )
       setReports((current) => [report, ...current.filter((row) => row.id !== report.id)])
-      setMessage('Report PDF generated.')
+      setMessage('Report ready.')
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Failed to generate report.')
     } finally {
@@ -2881,16 +2883,16 @@ function ReportsPage({
     }
   }
 
-  async function downloadReport(report: ReportRecord, archive = false) {
-    const endpoint = archive ? report.archive_url : report.download_url
+  async function downloadReport(report: ReportRecord, format: 'pdf' | 'xlsx' | 'zip' = 'pdf') {
+    const endpoint = format === 'zip' ? report.archive_url : format === 'xlsx' ? report.excel_url : report.download_url
     if (!endpoint || downloading) return
-    setDownloading(`${report.id}:${archive ? 'zip' : 'pdf'}`)
+    setDownloading(`${report.id}:${format}`)
     try {
       const blob = await apiBlob(endpoint, token)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `${report.metadata_json.session_code ?? 'session'}_${report.id}.${archive ? 'zip' : 'pdf'}`
+      anchor.download = `${report.metadata_json.session_code ?? 'session'}_${report.id}.${format}`
       document.body.appendChild(anchor)
       anchor.click()
       anchor.remove()
@@ -2900,6 +2902,22 @@ function ReportsPage({
     } finally {
       setDownloading(null)
     }
+  }
+
+  function downloadActions(report: ReportRecord) {
+    return <Box className="reportDownloads" aria-label="Report downloads">
+      {([
+        ['pdf', 'Download PDF', report.download_url, <FileText size={16} />],
+        ['xlsx', 'Download Excel', report.excel_url, <FileSpreadsheet size={16} />],
+        ['zip', 'Download ZIP', report.archive_url, <FileArchive size={16} />],
+      ] as const).map(([format, name, endpoint, icon]) => <Tooltip key={format}
+        title={endpoint ? name : 'Not included in this older report. Generate a new report.'}>
+        <span><Button size="small" variant={format === 'zip' ? 'contained' : 'outlined'} startIcon={icon}
+          disabled={!endpoint || downloading !== null} onClick={() => void downloadReport(report, format)}>
+          {downloading === `${report.id}:${format}` ? 'Downloading...' : name}
+        </Button></span>
+      </Tooltip>)}
+    </Box>
   }
 
   return (
@@ -2949,6 +2967,12 @@ function ReportsPage({
             </Typography>
           </Box>
         ) : null}
+        {selectedReport ? <Box className="selectedReportDownloads">
+          {downloadActions(selectedReport)}
+          {!selectedReport.excel_url || !selectedReport.archive_url ? <Alert severity="info" sx={{ mt: 1 }}>
+            Excel or ZIP is unavailable in this older report. Select Generate Report to create all formats.
+          </Alert> : null}
+        </Box> : null}
         {generating || loading ? <LinearProgress sx={{ mt: 2 }} /> : null}
         {message ? <Alert severity={message.includes('Failed') ? 'error' : 'info'} sx={{ mt: 2 }}>{message}</Alert> : null}
       </Paper>
@@ -2976,18 +3000,7 @@ function ReportsPage({
                   <Chip size="small" label={`${report.metadata_json.photo_count ?? 0} photos`} />
                   {Number(report.metadata_json.omitted_photo_count ?? 0) > 0 ? <Chip size="small" color="warning" label={`${report.metadata_json.omitted_photo_count} photo${report.metadata_json.omitted_photo_count === 1 ? '' : 's'} unavailable`} /> : null}
                 </Box>
-                <Button
-                  size="small"
-                  startIcon={<Download size={16} />}
-                  disabled={!report.download_url || downloading !== null}
-                  onClick={() => void downloadReport(report)}
-                >
-                  {downloading === `${report.id}:pdf` ? 'Downloading…' : 'PDF'}
-                </Button>
-                {report.archive_url ? <Button size="small" startIcon={<FileArchive size={16} />}
-                  disabled={downloading !== null} onClick={() => void downloadReport(report, true)}>
-                  {downloading === `${report.id}:zip` ? 'Downloading…' : 'ZIP + Photos'}
-                </Button> : null}
+                {downloadActions(report)}
               </Box>
             ))}
           </Box>

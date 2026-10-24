@@ -13,6 +13,7 @@ class ReportRead(BaseModel):
     metadata_json: dict
     download_url: str | None = None
     archive_url: str | None = None
+    excel_url: str | None = None
 
 
 class ReportCreateResponse(ReportRead):

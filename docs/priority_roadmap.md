@@ -141,8 +141,10 @@ Exit criteria:
 
 ## Priority 7 - Reports
 
-Status: implemented in 0.2.1 with uncapped PDF documentation, original photos,
-sample CSVs/checksum manifest in ZIP, immutable report versions and owner-only downloads.
+Status: implemented in 0.2.2 with structured PDF sections, formatted Excel with
+embedded photos, explicit PDF/Excel/ZIP download controls, original photos and
+sample CSVs/checksum manifest in ZIP. Report versions remain immutable and owner-only.
+See [report export delivery](report_exports_2026-10-24.md).
 
 Goal: membuat output yang bisa dibagikan untuk audit internal.
 

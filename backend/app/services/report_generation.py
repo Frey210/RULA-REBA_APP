@@ -1,23 +1,13 @@
 import csv
 import hashlib
 import json
-import sys
 from datetime import UTC, datetime
 from io import BytesIO, StringIO
 from pathlib import Path
 from uuid import uuid4
-from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from PIL import Image as PillowImage
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import mm
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-import reportlab
-from reportlab.platypus import Image, LongTable, Paragraph, SimpleDocTemplate, Spacer, TableStyle
 from sqlalchemy import select
 from sqlalchemy.orm import Session as DbSession
 
@@ -35,6 +25,8 @@ from app.models.worker import Worker
 from app.models.worker_enrollment_image import WorkerEnrollmentImage
 from app.services.exposure_intervals import merged_duration_ms
 from app.services.pose_quality import REQUIRED_COMPONENTS
+from app.services.report_pdf import write_pdf as _write_pdf
+from app.services.report_excel import write_excel
 
 
 def media_path(value: str) -> Path:
@@ -83,6 +75,7 @@ def generate_session_pdf_report(db: DbSession, session: Session, current_user: U
     report_dir.mkdir(parents=True, exist_ok=False)
     output_path = report_dir / "ergonomic_report.pdf"
     archive_path = report_dir / "session_documentation.zip"
+    excel_path = report_dir / "ergonomic_report.xlsx"
     workers = db.execute(select(SessionWorker, Worker).outerjoin(Worker, SessionWorker.worker_id == Worker.id)
                          .where(SessionWorker.session_id == session.id).order_by(SessionWorker.created_at)).all()
     events = list(db.scalars(select(ErgonomicEvent).where(ErgonomicEvent.session_id == session.id,
@@ -133,7 +126,7 @@ def generate_session_pdf_report(db: DbSession, session: Session, current_user: U
             worker = worker_map.get(event.session_worker_id)
             key = worker.worker_id if worker and worker.identity_status == "confirmed" and worker.worker_id else event.session_worker_id
             groups.setdefault(key, []).append(event)
-    manifest = dict(format_version=1, app_version="0.2.1", report_id=report_id, generated_at=_format_dt(now),
+    manifest = dict(format_version=2, app_version="0.2.2", report_id=report_id, generated_at=_format_dt(now),
         operator_full_name=current_user.full_name,
         generated_by=current_user.email, session=dict(id=session.id, code=session.session_code,
             status=session.status, notes=session.notes, created_by=session.created_by,
@@ -174,6 +167,10 @@ def generate_session_pdf_report(db: DbSession, session: Session, current_user: U
             output_path.with_suffix(".tmp").replace(output_path)
             archive.write(output_path, "ergonomic_report.pdf")
             manifest["pdf_sha256"] = hashlib.sha256(output_path.read_bytes()).hexdigest()
+            write_excel(excel_path.with_suffix(".tmp"), manifest, detections, archive)
+            excel_path.with_suffix(".tmp").replace(excel_path)
+            archive.write(excel_path, "ergonomic_report.xlsx")
+            manifest["excel_sha256"] = hashlib.sha256(excel_path.read_bytes()).hexdigest()
             # Stream raw samples into the archive instead of loading an entire long session in RAM.
             columns = ["id", "camera_node_id", "session_worker_id", "frame_id", "timestamp_ms", "observed_at",
                        "edge_worker_id", "tracking_id", "confidence", "reid_confidence", "bbox", "keypoints", "angles", "run_id", "clock_source", "pose_source", "missing_components"]
@@ -197,7 +194,8 @@ def generate_session_pdf_report(db: DbSession, session: Session, current_user: U
             generated_at=now, metadata_json=dict(session_code=session.session_code, event_count=len(events),
                 worker_count=len(workers), reviewed_assessment_count=sum(a.assessment_status == "reviewed" for a in assessments),
                 photo_count=sum("archive_file" in photo for photo in evidence),
-                omitted_photo_count=sum("omission" in photo for photo in evidence), archive_path=str(archive_path)))
+                omitted_photo_count=sum("omission" in photo for photo in evidence), archive_path=str(archive_path),
+                excel_path=str(excel_path), format_version=2))
         db.add(report)
         db.commit()
     except Exception:
@@ -209,121 +207,3 @@ def generate_session_pdf_report(db: DbSession, session: Session, current_user: U
         raise
     db.refresh(report)
     return report
-
-
-def _write_pdf(output_path, data, detections, archive):
-    font_dir = Path(reportlab.__file__).parent / "fonts"
-    if "ErgoBody" not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont("ErgoBody", str(font_dir / "Vera.ttf")))
-        pdfmetrics.registerFont(TTFont("ErgoBold", str(font_dir / "VeraBd.ttf")))
-    styles = getSampleStyleSheet()
-    for name in ("BodyText", "Normal", "Title", "Heading1", "Heading2", "Heading3"):
-        styles[name].fontName = "ErgoBody" if name in {"BodyText", "Normal"} else "ErgoBold"
-    styles["BodyText"].fontSize = 8
-    styles["BodyText"].leading = 11
-    story = []
-
-    def text(value, style="BodyText"):
-        return Paragraph(escape(str(value if value is not None else "Not measured / unavailable")).replace("\n", "<br/>"), styles[style])
-
-    def table(rows, widths=(40 * mm, 142 * mm), header=False):
-        result = LongTable([[text(cell) for cell in row] for row in rows], colWidths=widths,
-                           repeatRows=1 if header else 0, hAlign="LEFT", splitInRow=1)
-        result.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), .3, colors.HexColor("#d8dedf")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ("BACKGROUND", (0, 0), (-1, 0) if header else (0, -1), colors.HexColor("#edf3f2"))]))
-        story.append(result)
-        story.append(Spacer(1, 6))
-
-    def fields(values, prefix=""):
-        for key, value in values.items():
-            label = f"{prefix}{key}".replace("_", " ")
-            if isinstance(value, dict):
-                fields(value, label + " / ")
-            else:
-                displayed = _json(value) if isinstance(value, list) else "Not measured / unavailable" if value is None else value
-                story.append(text(f"{label}: {displayed}"))
-
-    def footer(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("Helvetica", 7)
-        canvas.drawString(14 * mm, 8 * mm, f"ERGoSIGHT | {data['report_id']}")
-        canvas.drawRightString(196 * mm, 8 * mm, f"{doc.page}")
-        canvas.restoreState()
-
-    assets = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[2])) / "assets"
-    logo = assets / "ergosight-logo.png"
-    if logo.is_file():
-        image = Image(str(logo), width=48 * mm, height=25 * mm, kind="proportional")
-        image.hAlign = "LEFT"
-        story.append(image)
-    story.append(text("ERGoSIGHT", "Title"))
-    story.append(text("Ergonomic Session Report", "Heading1"))
-    story.append(text(f"Generated {data['generated_at']} by {data.get('operator_full_name') or data['generated_by']} | Version {data['app_version']}"))
-    story.append(text("Assessment limitations", "Heading2"))
-    story.append(text("Single-camera 2D estimates are provisional, not a validated ergonomic diagnosis. Missing angles are not zero. "
-        "Wrist twist, force, coupling and activity require operator verification. Track IDs are not confirmed human identities. "
-        "Legacy/reference photos are not verified posture evidence. All times below are UTC. Documentation contains personal data; share only with authorized recipients."))
-    story.append(text("Session Summary", "Heading2"))
-    table(list(data["session"].items()) + [["High risk exposure (overlap merged)", f"{data['high_risk_duration_ms'] / 1000:.1f} seconds"]])
-    story.append(text("Cameras", "Heading2"))
-    for camera in data["cameras"]:
-        table(list(camera.items()))
-    story.append(text("Workers and Identity Scope", "Heading2"))
-    if not data["workers"]:
-        story.append(text("No workers recorded."))
-    for worker in data["workers"]:
-        rows = []
-        for key, value in worker.items():
-            if key in {"rula", "reba"}:
-                value = f"Provisional average: {value['provisional_average'] if value['samples'] else '-'}; peak: {value['provisional_peak'] or '-'}; samples: {value['samples']}"
-            rows.append([key.replace('_', ' '), value])
-        table(rows)
-    story.append(text("Assessments - Provisional and Reviewed", "Heading2"))
-    if not data["assessments"]:
-        story.append(text("No assessments recorded."))
-    for assessment in data["assessments"]:
-        story.append(text(f"{assessment['type'].upper()} | {assessment['status']} | {assessment['id']}", "Heading3"))
-        fields(assessment)
-        story.append(Spacer(1, 8))
-    story.append(text("Observation and Risk Timeline", "Heading2"))
-    if not data["events"]:
-        story.append(text("No events recorded."))
-    for event in data["events"]:
-        story.append(text(event["event_type"].replace("_", " ").title(), "Heading3"))
-        table(list(event.items()))
-        source = detections.get(event["source_detection_id"])
-        if source:
-            story.append(text("Source pose measurements (degrees)", "Heading3"))
-            table(_angle_rows(source))
-            header = (source.raw_payload or {}).get("event", {})
-            fields(dict(detection_id=source.id, frame_id=source.frame_id, captured_at=_format_dt(source.observed_at),
-                        confidence=source.confidence, clock_source=header.get("clock_source", "device_clock"),
-                        run_id=header.get("run_id")))
-            source_metadata = (source.raw_payload or {}).get("detection", {}).get("metadata", {})
-            quality = source_metadata.get("assessment_quality", {})
-            fields(dict(pose_source=source_metadata.get("source"), quality_status=quality.get("status"), missing_components=quality.get("missing_components")))
-        else:
-            story.append(text("Source detection unavailable; no pose measurements inferred."))
-        story.append(text("Photos: " + (", ".join(photo["id"] for photo in data["photos"] if photo.get("event_id") == event["id"]) or "None")))
-    story.append(text("Documentation Photos", "Heading2"))
-    if not data["photos"]:
-        story.append(text("No documentation photos recorded."))
-    for photo in data["photos"]:
-        story.append(text(f"{photo['kind']} | {photo['id']}", "Heading3"))
-        if "archive_file" in photo:
-            content = archive.read(photo["archive_file"])
-            image = Image(BytesIO(content))
-            scale = min(182 * mm / image.imageWidth, 96 * mm / image.imageHeight)
-            image.drawWidth, image.drawHeight = image.imageWidth * scale, image.imageHeight * scale
-            image.hAlign = "LEFT"
-            story.append(image)
-        fields(photo)
-        source = detections.get(photo.get("detection_id"))
-        if source:
-            table(_angle_rows(source))
-        story.append(Spacer(1, 10))
-    SimpleDocTemplate(str(output_path), pagesize=A4, rightMargin=14 * mm, leftMargin=14 * mm,
-        topMargin=14 * mm, bottomMargin=16 * mm, title=f"{data['session']['code']} Ergonomic Report").build(
-            story, onFirstPage=footer, onLaterPages=footer)

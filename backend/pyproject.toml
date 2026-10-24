@@ -1,6 +1,6 @@
 [project]
 name = "ergosight-backend"
-version = "0.2.1"
+version = "0.2.2"
 description = "FastAPI backend for the ERGoSIGHT ergonomic monitoring platform"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,6 +13,7 @@ dependencies = [
     "psycopg[binary]>=3.2.1",
     "pydantic-settings>=2.5.2",
     "pillow>=10.4.0",
+    "openpyxl>=3.1.5,<4",
     "pyjwt>=2.9.0",
     "python-multipart>=0.0.9",
     "reportlab>=5.0.0",
