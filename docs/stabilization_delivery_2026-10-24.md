@@ -182,8 +182,9 @@ akurasi skor ergonomi. Mulai dengan satu worker dan satu kamera.
   video terus berjalan dan mengikuti gerakan, bukan memutar gerakan lama.
 - `REID_0002` stabil selama jendela sampel, tetapi kemudian muncul ID 3/4/5.
   Interval antar deteksi ID berbeda sekitar 13-26 detik, sedangkan konfigurasi
-  perangkat `EDGE_REID_TTL_SECONDS=10`. Identitas setelah jeda belum dinyatakan
-  lulus. Jeda deteksi belum tentu berarti pekerja benar-benar keluar kamera.
+  perangkat `EDGE_REID_TTL_SECONDS=10`. Pengguna mengonfirmasi sempat keluar kamera;
+  perubahan tersebut konsisten dengan batas retensi ini, bukan bukti ID berubah
+  ketika pekerja terus terlihat. Re-identifikasi setelah jeda panjang belum lulus.
 - Snapshot sesi berstatus ready. Review visual dan akurasi sudut tetap perlu diuji.
 - Bagian sesi sebelum koreksi jam tidak diterima backend; jangan menganggap
   durasi tersebut sebagai exposure tercatat. Koreksi jam manual belum menyelesaikan
