@@ -32,7 +32,7 @@ async page => {
     else if (path === '/health') data = { status: 'ok' };
     else if (path === '/api/v1/camera-nodes') data = [{ id: 'qa-camera', cam_id: 'CAM_QA', status: 'online',
       metadata_json: { edge_base_url: 'http://edge.test:8765', display_name: 'QA Camera', health: { camera_available: true } } }];
-    else if (path === '/api/v1/sessions') data = [{ id: 'qa-session', session_code: 'SESSION_QA', status: 'created',
+    else if (path === '/api/v1/sessions') data = [{ id: 'qa-session', session_code: 'SESSION_QA', status: 'running',
       metadata_json: { camera_node_ids: ['CAM_QA'] }, notes: null }];
     else if (path.endsWith('/workers')) data = [];
     else return route.fulfill({ status: 503, headers, json: { detail: 'QA fixture' } });
@@ -48,16 +48,29 @@ async page => {
   for (const width of [1440, 1280, 1120]) {
     await page.setViewportSize({ width, height: 900 });
     let baseline;
+    let retainedWorkers = 0;
+    let firstCardY;
     for (const workers of [0, 1, 6, 0]) {
       await page.evaluate(count => window.__previewLayoutSocket.onmessage({ data: JSON.stringify({
-        event_type: 'session_detection', cam_id: 'CAM_QA', session_id: 'SESSION_QA', run_id: 'qa-run',
+        event_type: 'session_detection', cam_id: 'CAM_QA', session_id: 'SESSION_QA', run_id: 'qa-run-' + innerWidth,
         timestamp: Date.now(), frame_id: Date.now(), detections: Array.from({ length: count }, (_, index) => ({
           worker_id: 'REID_' + index + '_long_worker_identity_for_layout_regression', tracking_id: index + 1,
           confidence: .9, reid_confidence: .7, bbox: [10, 20, 200, 300], keypoints: { points: [] }, metadata: {},
         })),
       }) }), workers);
       await page.waitForTimeout(workers ? 150 : 2300);
-      await page.waitForFunction(count => document.querySelectorAll('.insightPanel .workerCard').length === count, workers);
+      retainedWorkers = Math.max(retainedWorkers, workers);
+      await page.waitForFunction(count => document.querySelectorAll('.insightPanel .workerCard').length === count, retainedWorkers);
+      if (!workers && retainedWorkers) {
+        await page.getByText('No workers visible', { exact: true }).waitFor();
+        await page.getByText(/Last seen .*not live/).first().waitFor();
+        if (await page.locator('.workerCard[data-retained-check="yes"]').count() !== retainedWorkers) throw new Error('Worker cards were remounted during a detection gap');
+        if (Math.abs((await page.locator('.workerCard').first().boundingBox()).y - firstCardY) > 1) throw new Error('Status change moved worker cards');
+      }
+      if (workers === 6) {
+        await page.locator('.workerCard').evaluateAll(cards => cards.forEach(card => { card.dataset.retainedCheck = 'yes'; }));
+        firstCardY = (await page.locator('.workerCard').first().boundingBox()).y;
+      }
       const bounds = await page.locator('.cameraPreview').boundingBox();
       const image = await page.locator('.cameraStream').boundingBox();
       if (!baseline) baseline = bounds;
@@ -74,8 +87,12 @@ async page => {
       if (panelsOverlap) throw new Error('Preview overlaps insights');
       results.push({ width, workers, preview: [bounds.width, bounds.height] });
       if (workers === 6) await page.screenshot({ path: `tmp/preview-layout-${width}.png`, fullPage: true });
+      if (!workers && retainedWorkers && width === 1280) await page.screenshot({ path: 'tmp/insights-last-seen-1280.png', fullPage: true });
     }
   }
+  await page.evaluate(() => window.__previewLayoutSocket.onclose());
+  await page.getByText('Disconnected', { exact: true }).waitFor();
+  if (await page.locator('.workerCard').count() !== 6) throw new Error('Disconnect removed last known cards');
   if (errors.length) throw new Error(errors.join('; '));
   await page.goto('about:blank');
   return results;

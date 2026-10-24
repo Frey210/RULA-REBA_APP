@@ -63,6 +63,8 @@ import type { FormEvent, ReactNode } from 'react'
 import './App.css'
 import ergosightLogo from './assets/ergosight-logo.png'
 import { CameraPreview } from './CameraPreview'
+import { retainWorkerInsights, insightIsLive } from './liveInsights'
+import type { LiveDetection, LiveDetectionEvent, WorkerInsightSnapshot } from './liveInsights'
 import {
   apiBlob,
   apiRequest,
@@ -728,29 +730,6 @@ function formatAnalyticsDay(value: string): string {
   return new Date(`${value}T00:00:00`).toLocaleDateString([], { day: '2-digit', month: 'short' })
 }
 
-type LiveDetectionEvent = {
-  event_type: string
-  session_id: string
-  cam_id: string
-  frame_id: number
-  timestamp: number
-  detections: LiveDetection[]
-  run_id: string
-}
-
-type LiveDetection = {
-  worker_id: string
-  tracking_id: number
-  confidence?: number
-  reid_confidence?: number
-  bbox: number[]
-  keypoints?: {
-    format: string
-    points: Array<{ id: number; name?: string; x: number; y: number; score?: number }>
-  }
-  metadata?: Record<string, unknown>
-}
-
 function LiveAssessment({
   token,
   sessions,
@@ -768,6 +747,7 @@ function LiveAssessment({
   const [selectedCamIds, setSelectedCamIds] = useState<string[]>(() => cameraNodes.map((node) => node.cam_id).slice(0, 1))
   const [notes, setNotes] = useState('')
   const [events, setEvents] = useState<LiveDetectionEvent[]>([])
+  const [insightSnapshots, setInsightSnapshots] = useState<Record<string, WorkerInsightSnapshot[]>>({})
   const [sessionWorkers, setSessionWorkers] = useState<SessionWorkerRecord[]>([])
   const [connected, setConnected] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -783,6 +763,9 @@ function LiveAssessment({
   const streamCamera = cameraNodes.find((node) => node.cam_id === streamCamId)
     ?? findStreamCamera(activeSession, cameraNodes, selectedCamIds)
   const latestEvent = events.find((event) => event.cam_id === streamCamera?.cam_id)
+  const insightRun = activeSession?.metadata_json.edge_runs?.[streamCamera?.cam_id ?? '']
+  const visibleInsightSnapshots = (insightSnapshots[streamCamera?.cam_id ?? ''] ?? []).filter(row =>
+    (row.session_id === activeSession?.session_code || row.session_id === activeSession?.id) && (!insightRun || row.run_id === insightRun))
   const latestVisibleEvent = events.find(
     (event) => event.cam_id === streamCamera?.cam_id && event.detections.length > 0 && now - event.timestamp <= 2_000,
   )
@@ -805,6 +788,7 @@ function LiveAssessment({
 
   useEffect(() => {
     if (!sessionCode) return
+    setInsightSnapshots({})
     let disposed = false
     let timer: ReturnType<typeof setTimeout>
     let ws: WebSocket
@@ -817,8 +801,11 @@ function LiveAssessment({
         if (!disposed) timer = setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000))
       }
       ws.onmessage = (event) => {
+        if (disposed) return
         const parsed = JSON.parse(event.data) as LiveDetectionEvent
         setEvents((current) => [parsed, ...current].slice(0, 50))
+        setInsightSnapshots(current => ({ ...current,
+          [parsed.cam_id]: retainWorkerInsights(current[parsed.cam_id] ?? [], parsed) }))
       }
     }
     connect()
@@ -1082,8 +1069,11 @@ function LiveAssessment({
             )}
           </Box>
           <DetectionInsights
-            latestEvent={latestVisibleEvent}
-            events={events}
+            snapshots={visibleInsightSnapshots}
+            now={now}
+            connected={connected}
+            running={activeSession?.status === 'running' || activeSession?.status === 'preparing'}
+            events={events.filter(event => event.cam_id === streamCamera?.cam_id)}
             workers={workers}
             sessionWorkers={sessionWorkers}
             assignWorker={assignWorker}
@@ -1095,46 +1085,57 @@ function LiveAssessment({
 }
 
 function DetectionInsights({
-  latestEvent,
+  snapshots,
+  now,
+  connected,
+  running,
   events,
   workers,
   sessionWorkers,
   assignWorker,
 }: {
-  latestEvent: LiveDetectionEvent | undefined
+  snapshots: WorkerInsightSnapshot[]
+  now: number
+  connected: boolean
+  running: boolean
   events: LiveDetectionEvent[]
   workers: WorkerRecord[]
   sessionWorkers: SessionWorkerRecord[]
   assignWorker: (sessionWorkerId: string, workerId: string | null) => Promise<void>
 }) {
-  if (!latestEvent || !latestEvent.detections.length) {
+  if (!snapshots.length) {
     return (
       <Box className="insightPanel emptyInsight">
         <Typography variant="h6">Detection Insights</Typography>
-        <Typography color="text.secondary">No detection event received yet.</Typography>
+        <Typography color="text.secondary">No workers observed yet.</Typography>
       </Box>
     )
   }
 
+  const liveCount = snapshots.filter(row => insightIsLive(row.timestamp, now, connected, running)).length
+  const status = !running ? 'Session inactive' : !connected ? 'Disconnected' : liveCount ? 'Live' : 'No workers visible'
   return (
     <Box className="insightPanel">
       <Box className="insightHeader">
         <Box>
           <Typography variant="h6">Detection Insights</Typography>
           <Typography variant="body2" color="text.secondary">
-            {latestEvent.cam_id} - frame {latestEvent.frame_id} - {latestEvent.detections.length} worker(s)
+            {snapshots[0].cam_id} - {liveCount} live / {snapshots.length} observed
           </Typography>
         </Box>
-        <Chip size="small" color="success" label="Live" />
+        <Chip size="small" color={liveCount ? 'success' : 'default'} label={status} />
       </Box>
 
       <Box className="workerList">
-        {latestEvent.detections.map((detection) => (
+        {snapshots.map((row) => (
           <WorkerInsightCard
-            key={`${detection.worker_id}-${detection.tracking_id}`}
-            detection={detection}
+            key={`${row.cam_id}/${row.run_id}/${row.detection.worker_id}`}
+            detection={row.detection}
+            isLive={insightIsLive(row.timestamp, now, connected, running)}
+            lastSeenAt={row.timestamp}
+            now={now}
             workers={workers}
-            sessionWorker={sessionWorkers.find((row) => row.edge_worker_id === detection.worker_id && row.run_id === latestEvent.run_id)}
+            sessionWorker={sessionWorkers.find((worker) => worker.edge_worker_id === row.detection.worker_id && worker.run_id === row.run_id)}
             assignWorker={assignWorker}
           />
         ))}
@@ -1161,11 +1162,17 @@ function DetectionInsights({
 
 function WorkerInsightCard({
   detection,
+  isLive,
+  lastSeenAt,
+  now,
   workers,
   sessionWorker,
   assignWorker,
 }: {
   detection: LiveDetection
+  isLive: boolean
+  lastSeenAt: number
+  now: number
   workers: WorkerRecord[]
   sessionWorker?: SessionWorkerRecord
   assignWorker: (sessionWorkerId: string, workerId: string | null) => Promise<void>
@@ -1196,6 +1203,9 @@ function WorkerInsightCard({
         <Chip size="small" label={`Track #${detection.tracking_id}`} />
       </Box>
 
+      <Typography className="workerCardStatus" variant="caption" color="text.secondary" sx={{ minHeight: 20 }}>
+        {isLive ? 'Live measurements' : `Last seen ${Math.max(0, Math.floor((now - lastSeenAt) / 1000))}s ago / not live`}
+      </Typography>
       <TextField
         select
         size="small"

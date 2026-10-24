@@ -184,6 +184,22 @@ horizontal. Jalankan dengan Vite pada 5173 dan
 setelah membuka browser Playwright. Tes memakai data sintetis tanpa mengubah sesi
 atau database pengguna. Installer lama belum memuat perbaikan CSS ini.
 
+#### Detection Insights Tanpa Kedipan
+
+Kartu worker tidak lagi dihapus ketika pose kosong atau melewati batas freshness
+dua detik. Panel menyimpan maksimal 32 snapshot worker terakhir per kamera/run,
+mempertahankan urutan kartu serta key berdasarkan worker, bukan nomor tracking.
+Setelah dua detik tanpa pembaruan, kartu berstatus Last seen / not live. Koneksi
+putus dan sesi tidak aktif juga tidak boleh menampilkan status Live. Data lama
+tetap terpisah dari hitungan orang aktif, overlay, dan perhitungan exposure.
+
+Cache dibersihkan saat sesi berganti dan dibatasi ke run kamera yang sesuai;
+pengguna tidak melihat pose sesi/perangkat lain sebagai data aktif. Sembilan tes
+logika preview/insights mencakup gap, perubahan tracking, scope, urutan data, batas
+retensi, dan freshness. Regresi browser juga memeriksa kartu DOM tetap sama saat
+worker menghilang serta panel tetap ada ketika koneksi putus. Ini perbaikan UI,
+bukan peningkatan akurasi detektor/Re-ID. Installer lama belum memuat perubahan ini.
+
 #### Uji Sesi Aktual CAM_02
 
 - Sesi `SESSION_20261024_004` berhasil menjalankan pipeline. Awalnya ingest ditolak:

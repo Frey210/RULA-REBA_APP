@@ -37,6 +37,7 @@ export type SessionRecord = {
   notes: string | null
   metadata_json: {
     camera_node_ids?: string[]
+    edge_runs?: Record<string, string>
     edge_start_results?: EdgeCommandResult[]
     edge_stop_results?: EdgeCommandResult[]
     [key: string]: unknown
