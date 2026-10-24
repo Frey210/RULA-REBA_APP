@@ -47,7 +47,7 @@ Dokumen ini membedakan perubahan kode dari validasi perangkat yang masih diperlu
 - Backend: 37 tes auth/pairing, lifecycle, deduplikasi, urutan frame, pemisahan kamera,
   data hilang, koreksi manual, bukti immutable, PDF privat, exposure overlap,
   serta hilangnya operator.
-- Edge: 18 tes ID persisten, otorisasi, buffer terbatas, frame basi, gap track, dan
+- Edge: 19 tes ID persisten, otorisasi, buffer terbatas, frame basi, gap track, dan
   dua identitas dengan penampilan ambigu.
 - Desktop: TypeScript/Vite build, ESLint, serta Playwright pada lebar 1440 dan
   1120 piksel. Review tanpa data lengkap tidak dapat difinalkan, foto dapat
@@ -171,8 +171,16 @@ akurasi skor ergonomi. Mulai dengan satu worker dan satu kamera.
 
 - Deploy manual CAM_02 sampai commit `9cb9950` sudah dikonfirmasi melalui output
   pengguna. Pemeriksaan LAN mengonfirmasi device_id tersedia dan kontrol tanpa
-  kredensial ditolak 403. Pipeline Hailo saat sesi belum diuji dengan kode rilis
-  ini; validasi source caps, frame age, dan hand inference masih diperlukan.
+  kredensial ditolak 403.
+- Startup pertama menemukan `ModuleNotFoundError: pydantic_settings` pada
+  environment Hailo. Commit edge `dc15a51` memisahkan writer frame dari settings
+  agent; path data diberikan eksplisit oleh worker. Update sudah dideploy langsung
+  ke CAM_02, tanpa mengubah paket Hailo, kernel, EEPROM, atau pairing.
+- Uji diagnostik start/stop pada Pi berhasil: frame pertama ready, empat sampel
+  berikutnya running/ready, frame age 148/156/248/339 ms, dan proses berhasil
+  dihentikan. Ini umur frame sumber, bukan pengukuran latency layar. Probe memakai
+  run diagnostik terpisah, bukan assessment pengguna. Uji sesi aktual, kualitas
+  pose/hand, dan kestabilan durasi panjang masih diperlukan.
 - Uji 60 menit dan target latency audit belum terbukti. Jalankan satu kamera dahulu,
   1-3 worker, kemudian dua Pi. Catat apakah frame age dan pemakaian memori stabil.
 - Belum ada klaim akurasi identitas otomatis untuk semua occlusion, pakaian serupa,
