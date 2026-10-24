@@ -766,6 +766,7 @@ function LiveAssessment({
   const [streamFps, setStreamFps] = useState<number | 'auto'>('auto')
   const [previewSettingsOpen, setPreviewSettingsOpen] = useState(false)
   const [streamCamId, setStreamCamId] = useState('')
+  const [previewCameraChoice, setPreviewCameraChoice] = useState('session')
   const [focusedCamId, setFocusedCamId] = useState('')
   const [cameraPage, setCameraPage] = useState(0)
   const [insightsOpen, setInsightsOpen] = useState(false)
@@ -777,15 +778,20 @@ function LiveAssessment({
 
   const activeSession = sessions.find((session) => session.session_code === sessionCode)
   const sessionCameraIds = activeSession?.metadata_json.camera_node_ids ?? []
-  const wallCameras = sessionCameraIds.length ? cameraNodes.filter(camera => sessionCameraIds.includes(camera.cam_id)) : cameraNodes
+  const sessionBusy = Boolean(activeSession && ['running', 'preparing', 'stopping'].includes(activeSession.status))
+  const sessionCameras = cameraNodes.filter(camera => sessionCameraIds.includes(camera.cam_id))
+  const previewCamera = cameraNodes.find(camera => 'camera:' + camera.id === previewCameraChoice)
+  const validPreviewChoice = previewCameraChoice.startsWith('camera:') && !previewCamera ? 'session' : previewCameraChoice
+  const defaultPreviewCameras = sessionCameraIds.length ? sessionCameras : cameraNodes
+  const wallCameras = sessionBusy ? sessionCameras : previewCamera ? [previewCamera]
+    : validPreviewChoice === 'all' ? cameraNodes : defaultPreviewCameras
   const streamCamera = wallCameras.find(camera => camera.cam_id === streamCamId) ?? wallCameras[0]
   const pageCount = Math.max(1, Math.ceil(wallCameras.length / 4))
   const currentPage = Math.min(cameraPage, pageCount - 1)
   const focusedCamera = wallCameras.find(camera => camera.cam_id === focusedCamId)
   const visibleCameras = focusedCamera ? [focusedCamera] : wallCameras.slice(currentPage * 4, currentPage * 4 + 4)
-  const sessionBusy = Boolean(activeSession && ['running', 'preparing', 'stopping'].includes(activeSession.status))
   const sessionRunning = activeSession?.status === 'running' || activeSession?.status === 'preparing'
-  const sessionCamerasReady = sessionCameraIds.length > 0 && wallCameras.length === sessionCameraIds.length && wallCameras.every(camera => camera.status === 'online' && camera.metadata_json.health?.camera_available)
+  const sessionCamerasReady = sessionCameraIds.length > 0 && sessionCameras.length === sessionCameraIds.length && sessionCameras.every(camera => camera.status === 'online' && camera.metadata_json.health?.camera_available)
   const insightRun = activeSession?.metadata_json.edge_runs?.[streamCamera?.cam_id ?? '']
   const visibleInsightSnapshots = (insightSnapshots[streamCamera?.cam_id ?? ''] ?? []).filter(row =>
     (row.session_id === activeSession?.session_code || row.session_id === activeSession?.id) && (!insightRun || row.run_id === insightRun))
@@ -812,6 +818,7 @@ function LiveAssessment({
   useEffect(() => {
     if (!sessionCode) return
     setInsightSnapshots({})
+    setPreviewCameraChoice('session')
     setCameraPage(0)
     setFocusedCamId('')
     setInsightsOpen(false)
@@ -1016,6 +1023,21 @@ function LiveAssessment({
           <Button variant="outlined" startIcon={<Plus size={16} />} disabled={loading || sessionBusy || !cameraNodes.length} onClick={openNewSession}>New session</Button>
         </Box>
         <Box className="previewControlRow">
+          {!sessionBusy ? <TextField select size="small" label="Preview camera" value={validPreviewChoice}
+            disabled={loading || !cameraNodes.length} className="previewCameraPicker"
+            onChange={event => {
+              setPreviewCameraChoice(event.target.value)
+              setCameraPage(0)
+              setFocusedCamId('')
+              setInsightsOpen(false)
+              setInspectorWorkerId('')
+            }}>
+            <MenuItem value="session">{activeSession ? 'Session cameras' : 'All paired cameras'}</MenuItem>
+            {activeSession ? <MenuItem value="all">All paired cameras</MenuItem> : null}
+            {cameraNodes.map(camera => <MenuItem key={camera.id} value={'camera:' + camera.id}>
+              {String(camera.metadata_json.display_name || camera.cam_id)} ({camera.cam_id}){camera.status === 'online' ? '' : ' - Offline'}
+            </MenuItem>)}
+          </TextField> : null}
           <FormControlLabel control={<Switch size="small" checked={showStream} onChange={event => setShowStream(event.target.checked)} />} label="Video" />
           <FormControlLabel control={<Switch size="small" checked={showOverlay} onChange={event => setShowOverlay(event.target.checked)} />} label="Overlay" />
           <Chip label={streamFps === 'auto' ? 'Preview: Auto' : 'Preview: ' + streamFps + ' FPS'} size="small" />
@@ -1048,7 +1070,7 @@ function LiveAssessment({
               <Box className="cameraTileIdentity"><Typography variant="subtitle2" title={label} noWrap>{label}</Typography>
                 <Typography variant="caption" color="text.secondary">{camera.cam_id} / {count} visible</Typography></Box>
               <Chip size="small" label={ready ? 'Ready' : camera.status === 'online' ? 'No camera' : 'Offline'} color={ready ? 'success' : 'default'} />
-              <Tooltip title="Assign workers"><IconButton aria-label={'Assign workers for ' + camera.cam_id} aria-controls="camera-worker-inspector" aria-expanded={insightsOpen && streamCamera?.cam_id === camera.cam_id} onClick={() => inspectCamera(camera.cam_id)}><UserRound size={18} /></IconButton></Tooltip>
+              <Tooltip title="Assign workers"><span><IconButton disabled={!sessionCameraIds.includes(camera.cam_id)} aria-label={'Assign workers for ' + camera.cam_id} aria-controls="camera-worker-inspector" aria-expanded={insightsOpen && streamCamera?.cam_id === camera.cam_id} onClick={() => inspectCamera(camera.cam_id)}><UserRound size={18} /></IconButton></span></Tooltip>
               <Tooltip title={focusedCamera ? 'Show all cameras' : 'Focus camera'}><IconButton aria-label={(focusedCamera ? 'Show all cameras from ' : 'Focus camera ') + camera.cam_id}
                 onClick={() => { setFocusedCamId(focusedCamera ? '' : camera.cam_id); if (insightsOpen) setStreamCamId(camera.cam_id) }}>{focusedCamera ? <Minimize2 size={18} /> : <Maximize2 size={18} />}</IconButton></Tooltip>
             </Box>

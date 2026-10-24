@@ -14,7 +14,7 @@ Rebuild both PDFs with `py -3.12 scripts\generate_product_docs.py`.
 
 ## Current Status
 
-Version 0.2.2 includes authenticated pairing, multi-camera live workspace, scoped
+Version 0.2.3 includes authenticated pairing, multi-camera live workspace, scoped
 worker assignment, provisional scoring, evidence-backed manual review, complete
 PDF/Excel/ZIP documentation and private diagnostic export. Physical multi-Pi, 60-minute
 load and reference ergonomic accuracy tests are still release gates. See
@@ -72,8 +72,8 @@ Build the complete Windows installer from the `desktop` directory:
 npm.cmd run dist:win
 ```
 
-The default output is `desktop\installer\ERGoSIGHT-Setup-0.2.2.exe`. The current
-delivery build is under `desktop\installer\reports-0.2.2\`. It bundles
+The default output is `desktop\installer\ERGoSIGHT-Setup-0.2.3.exe`. The current
+delivery build is under `desktop\installer\preview-0.2.3\`. It bundles
 Electron and FastAPI, applies migrations, creates shortcuts and a private-network
 firewall rule. Normal installations require neither Python nor Node.js. Installer
 execution/upgrade on a clean second laptop remains to be verified.
@@ -108,6 +108,12 @@ raw-data deletion is disabled; use History to explicitly delete an unwanted stop
 session after exporting its documentation if needed.
 
 ## Connecting an edge device
+
+Before starting a session, Live Assessment > Preview camera selects any paired
+camera, All paired cameras, or Session cameras. This only changes the preview;
+it does not start inference or alter the saved session camera selection. During
+preparing/running/stopping the wall follows the session cameras. After Stop the
+preview selector is available again. Offline cameras show an offline placeholder.
 
 - Direct LAN: connect the Raspberry Pi and laptop with an Ethernet cable, leave the laptop adapter on automatic DHCP, then open **Devices** and select **Scan LAN**. The edge address is `10.55.0.1`; Windows Internet Connection Sharing is not required.
 - Wi-Fi onboarding: connect the laptop once to `ERGoSIGHT-CAM01` using the password on the device label, open **Devices**, pair the discovered edge, then select **Set up Wi-Fi**. Choose the destination network, enter its password, reconnect the laptop to that network, and run **Scan LAN** again.

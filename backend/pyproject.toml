@@ -1,6 +1,6 @@
 [project]
 name = "ergosight-backend"
-version = "0.2.2"
+version = "0.2.3"
 description = "FastAPI backend for the ERGoSIGHT ergonomic monitoring platform"
 requires-python = ">=3.12"
 dependencies = [

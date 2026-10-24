@@ -518,6 +518,11 @@
 .wallSummary { margin-left: auto; }
 .cameraPagination { flex-shrink: 0; }
 
+.previewCameraPicker {
+  width: 260px;
+  max-width: 100%;
+}
+
 .wallWorkspace { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; gap: 12px; }
 .wallWorkspace[data-inspector="true"] { grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); }
 .cameraWall {

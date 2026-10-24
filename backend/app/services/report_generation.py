@@ -126,7 +126,7 @@ def generate_session_pdf_report(db: DbSession, session: Session, current_user: U
             worker = worker_map.get(event.session_worker_id)
             key = worker.worker_id if worker and worker.identity_status == "confirmed" and worker.worker_id else event.session_worker_id
             groups.setdefault(key, []).append(event)
-    manifest = dict(format_version=2, app_version="0.2.2", report_id=report_id, generated_at=_format_dt(now),
+    manifest = dict(format_version=2, app_version="0.2.3", report_id=report_id, generated_at=_format_dt(now),
         operator_full_name=current_user.full_name,
         generated_by=current_user.email, session=dict(id=session.id, code=session.session_code,
             status=session.status, notes=session.notes, created_by=session.created_by,

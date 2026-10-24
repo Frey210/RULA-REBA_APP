@@ -35,6 +35,11 @@ Exit criteria:
 
 ## Priority 1 - Live Assessment Productization
 
+Status 0.2.3: selector Preview camera tersedia sebelum sesi dan setelah Stop,
+terpisah dari kamera sesi. Pilihan kamera tertentu/semua paired/kamera sesi tidak
+mengubah pencatatan atau menyalakan deteksi. Lihat
+[delivery preview](preview_camera_2026-10-24.md).
+
 Goal: membuat layar live assessment terasa seperti produk, bukan debug console.
 
 Work items:

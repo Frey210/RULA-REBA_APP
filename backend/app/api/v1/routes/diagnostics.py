@@ -35,7 +35,7 @@ def download_diagnostics(current_user: Annotated[User, Depends(get_current_user)
     storage = settings.media_root.resolve()
     while not storage.exists():
         storage = storage.parent
-    data = dict(format_version=1, app_version="0.2.2", generated_at=datetime.now(UTC).isoformat(),
+    data = dict(format_version=1, app_version="0.2.3", generated_at=datetime.now(UTC).isoformat(),
         runtime=dict(os=platform.system(), release=platform.release(), python=platform.python_version()),
         storage=dict(database_bytes=db_path.stat().st_size if db_path and db_path.is_file() else None,
                      free_bytes=shutil.disk_usage(storage).free,

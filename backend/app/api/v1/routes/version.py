@@ -11,5 +11,5 @@ router = APIRouter()
 def version() -> dict[str, str]:
     profile_id = hmac.new(settings.jwt_secret_key.encode(),
         f"ergosight-profile-v1:{settings.database_url}".encode(), hashlib.sha256).hexdigest()
-    return {"api_version": "1.0", "app": "ergoquipt", "app_version": "0.2.2", "profile_id": profile_id}
+    return {"api_version": "1.0", "app": "ergoquipt", "app_version": "0.2.3", "profile_id": profile_id}
 
