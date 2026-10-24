@@ -61,6 +61,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import './App.css'
 import ergosightLogo from './assets/ergosight-logo.png'
+import { CameraPreview } from './CameraPreview'
 import {
   apiBlob,
   apiRequest,
@@ -196,6 +197,17 @@ function App() {
   }, [authReady, token])
 
   useEffect(() => {
+    if (!token || !authReady) return
+    const active = sessions.filter((session) => ['running', 'preparing'].includes(session.status))
+    const heartbeat = () => active.forEach((session) => {
+      void apiRequest(`/api/v1/sessions/${session.id}/operator-heartbeat`, { method: 'POST' }, token).catch(() => {})
+    })
+    heartbeat()
+    const timer = window.setInterval(heartbeat, 5000)
+    return () => window.clearInterval(timer)
+  }, [authReady, token, sessions])
+
+  useEffect(() => {
     if (!tokens || authReady) return
     let cancelled = false
     async function restoreAuthentication() {
@@ -227,6 +239,8 @@ function App() {
   useEffect(() => {
     if (token && authReady) {
       void refreshData()
+      const timer = window.setInterval(() => void refreshData(), 5000)
+      return () => window.clearInterval(timer)
     }
   }, [authReady, token, refreshData])
 
@@ -311,7 +325,7 @@ function App() {
                 <ListItemButton
                   key={item.key}
                   selected={activePage === item.key}
-                  onClick={() => setActivePage(item.key)}
+                  onClick={() => { setActivePage(item.key); window.scrollTo(0, 0) }}
                 >
                   <ListItemIcon>
                     <Icon size={20} />
@@ -720,6 +734,7 @@ type LiveDetectionEvent = {
   frame_id: number
   timestamp: number
   detections: LiveDetection[]
+  run_id: string
 }
 
 type LiveDetection = {
@@ -759,17 +774,26 @@ function LiveAssessment({
   const [showStream, setShowStream] = useState(true)
   const [showOverlay, setShowOverlay] = useState(true)
   const [streamFps, setStreamFps] = useState(8)
+  const [streamCamId, setStreamCamId] = useState('')
+  const [now, setNow] = useState(() => Date.now())
 
   const activeSession = sessions.find((session) => session.session_code === sessionCode)
-  const latestEvent = events[0]
+  const streamCamera = cameraNodes.find((node) => node.cam_id === streamCamId)
+    ?? findStreamCamera(activeSession, cameraNodes, selectedCamIds)
+  const latestEvent = events.find((event) => event.cam_id === streamCamera?.cam_id)
   const latestVisibleEvent = events.find(
-    (event) => event.detections.length > 0 && (latestEvent?.timestamp ?? event.timestamp) - event.timestamp <= 2_000,
+    (event) => event.cam_id === streamCamera?.cam_id && event.detections.length > 0 && now - event.timestamp <= 2_000,
   )
   const selectedSessionEdgeResults = activeSession?.metadata_json.edge_start_results ?? []
-  const streamCamera = findStreamCamera(activeSession, cameraNodes, selectedCamIds)
-  const streamUrl = showStream && streamCamera ? buildStreamUrl(streamCamera, streamFps, showOverlay) : null
-  const activeWorkerCount = latestEvent?.detections.length ?? 0
-  const recentWorkerCount = new Set(events.flatMap((event) => event.detections.map((detection) => detection.worker_id))).size
+  const activeWorkerCount = latestEvent && now - latestEvent.timestamp < 2000 ? latestEvent.detections.length : 0
+  const recentWorkerCount = new Set(events.flatMap((event) => event.detections.map((detection) => `${event.cam_id}/${event.run_id}/${detection.worker_id}`))).size
+  const selectedCamerasReady = selectedCamIds.length > 0 && selectedCamIds.every((id) =>
+    cameraNodes.find((camera) => camera.cam_id === id)?.metadata_json.health?.camera_available)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (!sessionCode && sessions[0]) {
@@ -779,14 +803,24 @@ function LiveAssessment({
 
   useEffect(() => {
     if (!sessionCode) return
-    const ws = new WebSocket(liveWebSocketUrl(sessionCode, token))
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
-    ws.onmessage = (event) => {
-      const parsed = JSON.parse(event.data) as LiveDetectionEvent
-      setEvents((current) => [parsed, ...current].slice(0, 50))
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout>
+    let ws: WebSocket
+    let attempts = 0
+    function connect() {
+      ws = new WebSocket(liveWebSocketUrl(sessionCode))
+      ws.onopen = () => { ws.send(JSON.stringify({ token })); setConnected(true); attempts = 0 }
+      ws.onclose = () => {
+        setConnected(false)
+        if (!disposed) timer = setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000))
+      }
+      ws.onmessage = (event) => {
+        const parsed = JSON.parse(event.data) as LiveDetectionEvent
+        setEvents((current) => [parsed, ...current].slice(0, 50))
+      }
     }
-    return () => ws.close()
+    connect()
+    return () => { disposed = true; clearTimeout(timer); ws?.close() }
   }, [sessionCode, token])
 
   useEffect(() => {
@@ -913,7 +947,7 @@ function LiveAssessment({
 
   return (
     <Stack spacing={3}>
-      <PageTitle title="Live Assessment" action={<StatusChip status={connected ? 'online' : 'offline'} />} />
+      <PageTitle title="Live Assessment" action={<Chip label={connected ? 'Backend connected' : 'Backend reconnecting'} color={connected ? 'success' : 'warning'} />} />
       <Paper className="panel" elevation={0}>
         <Stack direction="row" spacing={2} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
           <TextField
@@ -935,7 +969,7 @@ function LiveAssessment({
           <Button variant="contained" disabled={loading || !activeSession || activeSession.status === 'running'} onClick={startSelectedSession}>
             Start Selected
           </Button>
-          <Button color="error" variant="outlined" disabled={loading || !activeSession || activeSession.status !== 'running'} onClick={stopSelectedSession}>
+          <Button color="error" variant="outlined" disabled={loading || !activeSession || !['running', 'preparing', 'stopping'].includes(activeSession.status)} onClick={stopSelectedSession}>
             Stop
           </Button>
         </Stack>
@@ -973,14 +1007,14 @@ function LiveAssessment({
                   key={node.id}
                   clickable
                   color={selected ? 'primary' : 'default'}
-                  label={`${label} (${node.status})`}
+                  label={`${label} (${formatMetricName(node.status)})`}
                   onClick={() => toggleCamera(node.cam_id)}
                 />
               )
             })}
           </Box>
           <TextField label="Session notes" value={notes} onChange={(event) => setNotes(event.target.value)} />
-          <Button variant="contained" disabled={loading || !cameraNodes.length} onClick={createAndStartSession}>
+          <Button variant="contained" disabled={loading || !selectedCamerasReady} onClick={createAndStartSession}>
             Create and Start Session
           </Button>
         </Stack>
@@ -995,6 +1029,12 @@ function LiveAssessment({
       <Paper className="panel" elevation={0}>
         <Stack direction="row" spacing={2} sx={{ alignItems: 'center', flexWrap: 'wrap', rowGap: 1 }}>
           <Typography variant="h6">Live Stream</Typography>
+          <TextField select size="small" label="Camera" value={streamCamera?.cam_id ?? ''}
+            onChange={(event) => setStreamCamId(event.target.value)} sx={{ minWidth: 180 }}>
+            {cameraNodes.map((camera) => <MenuItem key={camera.id} value={camera.cam_id}>
+              {String(camera.metadata_json.display_name || camera.cam_id)}
+            </MenuItem>)}
+          </TextField>
           <FormControlLabel
             control={<Switch checked={showStream} onChange={(event) => setShowStream(event.target.checked)} />}
             label="Camera"
@@ -1019,8 +1059,9 @@ function LiveAssessment({
         <Divider sx={{ my: 2 }} />
         <Box className="liveGrid">
           <Box className="livePreview">
-            {streamUrl ? (
-              <img className="cameraStream" src={streamUrl} alt={`${streamCamera?.cam_id ?? 'Camera'} live stream`} />
+            {showStream && streamCamera ? (
+              <CameraPreview key={streamCamera.id} cameraId={streamCamera.id} label={streamCamera.cam_id} token={token}
+                fps={streamFps} overlay={showOverlay} />
             ) : latestVisibleEvent?.detections.length ? (
               <>
                 <Typography variant="h6">{latestVisibleEvent.detections.length} worker(s) detected</Typography>
@@ -1085,7 +1126,7 @@ function DetectionInsights({
             key={`${detection.worker_id}-${detection.tracking_id}`}
             detection={detection}
             workers={workers}
-            sessionWorker={sessionWorkers.find((row) => row.edge_worker_id === detection.worker_id)}
+            sessionWorker={sessionWorkers.find((row) => row.edge_worker_id === detection.worker_id && row.run_id === latestEvent.run_id)}
             assignWorker={assignWorker}
           />
         ))}
@@ -1299,18 +1340,6 @@ function findStreamCamera(
   return preferredIds
     .map((camId) => cameraNodes.find((node) => node.cam_id === camId))
     .find((node): node is CameraNode => Boolean(node?.metadata_json.edge_base_url))
-}
-
-function buildStreamUrl(camera: CameraNode, fps: number, overlay: boolean): string | null {
-  const edgeBaseUrl = camera.metadata_json.edge_base_url
-  if (typeof edgeBaseUrl !== 'string') return null
-  const url = new URL('/stream/mjpeg', edgeBaseUrl)
-  url.searchParams.set('width', '640')
-  url.searchParams.set('height', '360')
-  url.searchParams.set('fps', String(fps))
-  url.searchParams.set('quality', '65')
-  url.searchParams.set('overlay', overlay ? 'true' : 'false')
-  return url.toString()
 }
 
 function WorkerRegistry({
@@ -1747,20 +1776,20 @@ function SettingsPage({
     setLoading(true)
     setMessage(null)
     try {
-      const result = window.ergoquipt?.pairDevice
-        ? await window.ergoquipt.pairDevice({
-            baseUrl: device.baseUrl,
-            pairingCode: pairing.pairing_code,
-            backendUrl: backendReachableUrl,
-          })
-        : await pairDeviceFromRenderer(device.baseUrl, pairing.pairing_code, backendReachableUrl)
+      const reachable = window.ergoquipt?.backendUrlForDevice
+        ? await window.ergoquipt.backendUrlForDevice({ baseUrl: device.baseUrl, backendUrl: backendReachableUrl })
+        : backendReachableUrl
+      const result = await apiRequest<{ status: string; cam_id: string }>('/api/v1/device-pairings/relay', {
+        method: 'POST', body: JSON.stringify({ cam_id: device.cam_id, pairing_code: pairing.pairing_code,
+          edge_base_url: device.baseUrl, backend_url: reachable }),
+      }, token)
       setMessage(`Paired ${result?.cam_id ?? device.cam_id}`)
       await attachEdgeBaseUrl(result?.cam_id ?? device.cam_id, device.baseUrl)
       setPairing(null)
       await probeDevice(device.baseUrl)
       await refreshData()
     } catch (err) {
-      setMessage(err instanceof Error ? `Pairing failed: ${err.message}` : 'Pairing failed.')
+      setMessage(err instanceof Error ? err.message : 'Pairing failed. Check the device connection and try again.')
     } finally {
       setLoading(false)
     }
@@ -1776,10 +1805,11 @@ function SettingsPage({
     setNetworkError(false)
     setNetworkLoading(true)
     try {
-      if (!window.ergoquipt) throw new Error('Wi-Fi setup requires the Electron application.')
+      const node = cameraNodes.find((node) => node.cam_id === device.cam_id)
+      if (!node) throw new Error('Pair this camera to your account first.')
       const [status, scan] = await Promise.all([
-        window.ergoquipt.networkStatus({ baseUrl: device.baseUrl }),
-        window.ergoquipt.scanWifi({ baseUrl: device.baseUrl }),
+        apiRequest<EdgeNetworkStatus>(`/api/v1/camera-nodes/${node.id}/network/status`, {}, token),
+        apiRequest<{ networks: WifiNetwork[] }>(`/api/v1/camera-nodes/${node.id}/network/wifi`, {}, token),
       ])
       setNetworkStatus(status)
       setWifiNetworks(scan.networks)
@@ -1794,12 +1824,14 @@ function SettingsPage({
   }
 
   async function refreshWifiNetworks() {
-    if (!networkDevice || !window.ergoquipt) return
+    if (!networkDevice) return
     setNetworkLoading(true)
     setNetworkMessage(null)
     setNetworkError(false)
     try {
-      const scan = await window.ergoquipt.scanWifi({ baseUrl: networkDevice.baseUrl })
+      const node = cameraNodes.find((node) => node.cam_id === networkDevice.cam_id)
+      if (!node) throw new Error('Pair this camera first.')
+      const scan = await apiRequest<{ networks: WifiNetwork[] }>(`/api/v1/camera-nodes/${node.id}/network/wifi`, {}, token)
       setWifiNetworks(scan.networks)
     } catch (err) {
       setNetworkError(true)
@@ -1811,7 +1843,7 @@ function SettingsPage({
 
   async function submitWifi(event: FormEvent) {
     event.preventDefault()
-    if (!networkDevice || !window.ergoquipt) return
+    if (!networkDevice) return
     if (!wifiSsid.trim() || (wifiPassword.length > 0 && wifiPassword.length < 8)) {
       setNetworkError(true)
       setNetworkMessage('Enter an SSID and a password of at least 8 characters, or leave it empty for an open network.')
@@ -1821,11 +1853,11 @@ function SettingsPage({
     setNetworkMessage(null)
     setNetworkError(false)
     try {
-      await window.ergoquipt.connectWifi({
-        baseUrl: networkDevice.baseUrl,
-        ssid: wifiSsid.trim(),
-        password: wifiPassword,
-      })
+      const node = cameraNodes.find((node) => node.cam_id === networkDevice.cam_id)
+      if (!node) throw new Error('Pair this camera first.')
+      await apiRequest(`/api/v1/camera-nodes/${node.id}/network/wifi/connect`, {
+        method: 'POST', body: JSON.stringify({ ssid: wifiSsid.trim(), password: wifiPassword }),
+      }, token)
       setNetworkMessage(`Connecting to ${wifiSsid.trim()}. Reconnect this laptop to that Wi-Fi, then run Scan LAN.`)
     } catch (err) {
       setNetworkError(true)
@@ -2038,25 +2070,6 @@ function SettingsPage({
   )
 }
 
-async function pairDeviceFromRenderer(baseUrl: string, pairingCode: string, backendReachableUrl: string) {
-  const response = await fetch(`${baseUrl}/pairing/complete`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      pairing_code: pairingCode,
-      backend_url: backendReachableUrl,
-      edge_base_url: baseUrl,
-    }),
-  })
-
-  if (!response.ok) {
-    const detail = await response.text()
-    throw new Error(detail || `HTTP ${response.status}`)
-  }
-
-  return (await response.json()) as { status: string; cam_id: string }
-}
-
 function inferBackendUrlFromEdge(edgeBaseUrl: string): string {
   try {
     const edge = new URL(edgeBaseUrl)
@@ -2076,6 +2089,7 @@ type ReviewFormState = {
   activity_score: number
   wrist_twist_score: number
   notes: string
+  angle_overrides: Record<string, number>
 }
 
 const emptyReviewForm: ReviewFormState = {
@@ -2083,6 +2097,7 @@ const emptyReviewForm: ReviewFormState = {
   coupling_score: 0,
   activity_score: 0,
   wrist_twist_score: 1,
+  angle_overrides: {},
   notes: '',
 }
 
@@ -2106,6 +2121,7 @@ function SessionReview({
   const [assessmentType, setAssessmentType] = useState<'reba' | 'rula'>('reba')
   const [reviewForm, setReviewForm] = useState<ReviewFormState>(emptyReviewForm)
   const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null)
+  const [inspectEvidence, setInspectEvidence] = useState(false)
   const [loading, setLoading] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -2205,10 +2221,31 @@ function SessionReview({
     }
   }, [selectedEventId, selectedSessionId, token])
 
+  const eventReviews = eventDetail?.reviews
   useEffect(() => {
-    const review = eventDetail?.reviews.find((row) => row.assessment_type === assessmentType)
+    const review = eventReviews?.find((row) => row.assessment_type === assessmentType)
     setReviewForm(review ? formFromReview(review) : emptyReviewForm)
-  }, [assessmentType, eventDetail])
+  }, [assessmentType, eventReviews])
+
+  const evidenceEventId = eventDetail?.id
+  const hasEvidence = Boolean(eventDetail?.snapshots.length)
+  useEffect(() => {
+    if (!evidenceEventId || hasEvidence) return
+    let cancelled = false
+    let attempts = 0
+    let timer: ReturnType<typeof setTimeout>
+    async function pollEvidence() {
+      try {
+        const detail = await apiRequest<EventDetailRecord>(`/api/v1/sessions/${selectedSessionId}/events/${evidenceEventId}`, {}, token)
+        if (cancelled) return
+        if (detail.snapshots.length) {
+          setEventDetail((current) => current?.id === detail.id ? { ...current, snapshots: detail.snapshots } : current)
+        } else if (++attempts < 20) timer = setTimeout(() => void pollEvidence(), 500)
+      } catch { /* Evidence can remain unavailable after the source buffer expires. */ }
+    }
+    timer = setTimeout(() => void pollEvidence(), 500)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [evidenceEventId, hasEvidence, selectedSessionId, token])
 
   useEffect(() => {
     const selected = events.find((event) => event.id === selectedEventId)
@@ -2281,25 +2318,6 @@ function SessionReview({
       setMessage(`${assessmentType.toUpperCase()} review saved.`)
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Failed to save review.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function captureSnapshot() {
-    if (!selectedEventId) return
-    setSaving(true)
-    setMessage(null)
-    try {
-      await apiRequest(
-        `/api/v1/sessions/${selectedSessionId}/events/${selectedEventId}/snapshots`,
-        { method: 'POST' },
-        token,
-      )
-      await reloadEventDetail()
-      setMessage('Snapshot captured.')
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Snapshot capture failed.')
     } finally {
       setSaving(false)
     }
@@ -2407,12 +2425,22 @@ function SessionReview({
   const currentReview = eventDetail?.reviews.find((row) => row.assessment_type === assessmentType)
   const provisional = eventDetail?.provisional_scores[assessmentType]
   const displayedBreakdown = currentReview?.breakdown ?? provisional?.breakdown ?? {}
+  const requiredAngles = ['neck', 'trunk', 'ua_l', 'ua_r', 'la_l', 'la_r', 'leg_l', 'leg_r', 'wrist_l', 'wrist_r']
+  const missingAngles = requiredAngles.filter((key) => typeof eventDetail?.angles[key] !== 'number')
+  const missingManual = missingAngles.filter((key) => !Number.isFinite(reviewForm.angle_overrides[key]))
+  const verifiedEvidence = eventDetail?.snapshots[0]?.metadata.source === 'verified_source_frame'
+  const canFinalize = missingManual.length === 0 && Boolean(snapshotUrl) && verifiedEvidence
   const selectedWorkerSummary = summary?.workers.find(
     (worker) => worker.session_worker_id === selectedEvent?.session_worker_id,
   )
 
   return (
     <Stack spacing={3}>
+      <Dialog open={inspectEvidence} onClose={() => setInspectEvidence(false)} maxWidth="lg" fullWidth>
+        <DialogTitle>Posture Evidence</DialogTitle>
+        <DialogContent>{snapshotUrl ? <img className="fullEvidence" src={snapshotUrl} alt="Recorded posture evidence" /> : null}</DialogContent>
+        <DialogActions><Button onClick={() => setInspectEvidence(false)}>Close</Button></DialogActions>
+      </Dialog>
       <PageTitle
         title="Session Review"
         action={selectedSession ? (
@@ -2590,8 +2618,8 @@ function SessionReview({
                       <Typography variant="body2" color="text.secondary">No snapshot</Typography>
                     </Box>
                   )}
-                  <Button size="small" startIcon={<Camera size={16} />} disabled={saving} onClick={captureSnapshot}>
-                    {snapshotUrl ? 'Recapture' : 'Capture Snapshot'}
+                  <Button size="small" startIcon={<Eye size={16} />} disabled={!snapshotUrl} onClick={() => setInspectEvidence(true)}>
+                    Inspect Snapshot
                   </Button>
                 </Box>
                 <Box>
@@ -2613,6 +2641,10 @@ function SessionReview({
               </Box>
 
               <Box className="assessmentSection">
+                {!canFinalize ? <Alert severity="warning" sx={{ mb: 2 }}>
+                  {missingManual.length ? `Incomplete posture: ${missingManual.map(formatMetricName).join(', ')}. Select another observation or enter verified manual measurements.`
+                    : 'Verified evidence is unavailable for this posture. Select another observation.'}
+                </Alert> : null}
                 <Tabs value={assessmentType} onChange={(_, value: 'reba' | 'rula') => setAssessmentType(value)}>
                   <Tab value="reba" label="REBA" />
                   <Tab value="rula" label="RULA" />
@@ -2631,6 +2663,15 @@ function SessionReview({
                 </Box>
 
                 <Box className="reviewFormGrid">
+                  {missingAngles.map((key) => <TextField key={key} type="number" label={`${formatMetricName(key)} - manual (deg)`}
+                    value={reviewForm.angle_overrides[key] ?? ''} disabled={!verifiedEvidence}
+                    slotProps={{ htmlInput: { min: -180, max: 180, step: 0.1 } }}
+                    onChange={(event) => {
+                      const overrides = { ...reviewForm.angle_overrides }
+                      if (event.target.value === '') delete overrides[key]
+                      else overrides[key] = Number(event.target.value)
+                      setReviewForm({ ...reviewForm, angle_overrides: overrides })
+                    }} />)}
                   <TextField
                     select
                     label={assessmentType === 'reba' ? 'Load / Force' : 'Force / Load'}
@@ -2662,7 +2703,7 @@ function SessionReview({
                   </TextField>
                   <TextField label="Review Notes" value={reviewForm.notes} onChange={(event) => setReviewForm({ ...reviewForm, notes: event.target.value })} multiline minRows={2} />
                 </Box>
-                <Button variant="contained" startIcon={<Save size={17} />} disabled={saving} onClick={saveReview}>
+                <Button variant="contained" startIcon={<Save size={17} />} disabled={saving || !canFinalize} onClick={saveReview}>
                   Save {assessmentType.toUpperCase()} Review
                 </Button>
               </Box>
@@ -2726,6 +2767,7 @@ function formFromReview(review: EventReviewRecord): ReviewFormState {
     coupling_score: review.manual_inputs.coupling_score ?? 0,
     activity_score: review.manual_inputs.activity_score ?? 0,
     wrist_twist_score: review.manual_inputs.wrist_twist_score ?? 1,
+    angle_overrides: review.angle_overrides ?? {},
     notes: review.notes ?? '',
   }
 }
@@ -3084,7 +3126,9 @@ function DeviceRow({
           )}
         </Box>
         <Typography sx={{ minWidth: 180 }}>{node.hostname ?? '-'}</Typography>
-        <Chip size="small" label={node.status} color={node.status === 'online' ? 'success' : 'default'} />
+        <Chip size="small" label={formatMetricName(node.status)} color={node.status === 'online' ? 'success' : 'default'} />
+        <Chip size="small" label={node.metadata_json.health?.camera_available ? 'Camera ready' : 'Camera unavailable'}
+          color={node.metadata_json.health?.camera_available ? 'success' : 'warning'} />
         {editable ? (
           <Stack direction="row" spacing={1} sx={{ ml: 'auto' }}>
             {isEditing ? (

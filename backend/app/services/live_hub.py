@@ -1,6 +1,8 @@
 from collections import defaultdict
+import asyncio
 
 from fastapi import WebSocket
+from starlette.websockets import WebSocketState
 
 
 class LiveHub:
@@ -8,7 +10,8 @@ class LiveHub:
         self._session_clients: dict[str, set[WebSocket]] = defaultdict(set)
 
     async def connect_session(self, session_id: str, websocket: WebSocket) -> None:
-        await websocket.accept()
+        if websocket.application_state != WebSocketState.CONNECTED:
+            await websocket.accept()
         self._session_clients[session_id].add(websocket)
 
     def disconnect_session(self, session_id: str, websocket: WebSocket) -> None:
@@ -20,15 +23,12 @@ class LiveHub:
             self._session_clients.pop(session_id, None)
 
     async def broadcast_session(self, session_id: str, payload: dict) -> None:
-        disconnected: list[WebSocket] = []
-        for websocket in list(self._session_clients.get(session_id, set())):
+        async def send(websocket):
             try:
-                await websocket.send_json(payload)
-            except RuntimeError:
-                disconnected.append(websocket)
-
-        for websocket in disconnected:
-            self.disconnect_session(session_id, websocket)
+                await asyncio.wait_for(websocket.send_json(payload), timeout=0.5)
+            except (RuntimeError, OSError, asyncio.TimeoutError):
+                self.disconnect_session(session_id, websocket)
+        await asyncio.gather(*(send(ws) for ws in list(self._session_clients.get(session_id, set()))))
 
 
 live_hub = LiveHub()

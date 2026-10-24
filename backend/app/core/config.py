@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+import secrets
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,7 +35,19 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    if settings.jwt_secret_key == "change-this-secret-before-production":
+        path = Path(".jwt-secret")
+        try:
+            with path.open("x", encoding="utf-8") as secret_file:
+                path.chmod(0o600)
+                secret_file.write(secrets.token_hex(48))
+        except FileExistsError:
+            pass
+        settings.jwt_secret_key = path.read_text(encoding="utf-8").strip()
+        if len(settings.jwt_secret_key) < 32:
+            raise RuntimeError("JWT secret file is incomplete")
+    return settings
 
 
 settings = get_settings()

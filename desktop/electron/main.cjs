@@ -24,6 +24,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   })
   mainWindow = win
@@ -91,7 +92,7 @@ async function backendIsReady() {
     })
     if (!response.ok) return false
     const schema = await response.json()
-    return Boolean(schema.paths?.['/api/v1/sessions/{session_id}/events'])
+    return Boolean(schema.paths?.['/api/v1/camera-nodes/{camera_node_id}/frame'])
   } catch {
     return false
   }

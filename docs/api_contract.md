@@ -1,5 +1,21 @@
 # API Contract
 
+## ERGoSIGHT 0.2.0 Compatibility
+
+The 0.2.0 [stabilization delivery](stabilization_delivery_2026-10-24.md) supersedes
+legacy examples below: device pairing includes a persistent UUID `device_id` and
+returns a device Bearer credential only to the edge. Detection events require
+`run_id`, source `frame_id`, and capture timestamp; they are accepted only for
+the owning camera's active session/run. Browser live subscribers authenticate
+with an initial `{ "token": "<access token>" }` WebSocket message instead of a URL token.
+
+The desktop pairs via authenticated `POST /api/v1/device-pairings/relay` and retrieves
+preview frames via `GET /api/v1/camera-nodes/{id}/frame`. Device control, video,
+network setup, and exact-frame evidence endpoints require the device credential.
+The backend renews `POST /detection/lease`; the desktop renews
+`POST /api/v1/sessions/{id}/operator-heartbeat`. Missing angles remain null;
+review `angle_overrides` records explicit manual measurements against verified evidence.
+
 ## Versioning
 
 All REST endpoints are under:

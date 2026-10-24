@@ -1,7 +1,10 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from typing import Annotated
+
+AngleValue = Annotated[float, Field(ge=-180, le=180, allow_inf_nan=False)]
 
 
 class EventReviewUpsert(BaseModel):
@@ -10,6 +13,15 @@ class EventReviewUpsert(BaseModel):
     activity_score: int = Field(default=0, ge=0, le=2)
     wrist_twist_score: int | None = Field(default=None, ge=1, le=2)
     notes: str | None = Field(default=None, max_length=2000)
+    angle_overrides: dict[str, AngleValue] = Field(default_factory=dict, max_length=10)
+
+    @field_validator("angle_overrides")
+    @classmethod
+    def valid_components(cls, value):
+        from app.services.pose_quality import REQUIRED_COMPONENTS
+        if set(value) - set(REQUIRED_COMPONENTS):
+            raise ValueError("Unknown posture component")
+        return value
 
 class EventReviewRead(BaseModel):
     id: str
@@ -24,6 +36,7 @@ class EventReviewRead(BaseModel):
     notes: str | None
     reviewed_by: str | None
     calculated_at: datetime
+    angle_overrides: dict[str, float] = Field(default_factory=dict)
 
 
 class EventSnapshotRead(BaseModel):

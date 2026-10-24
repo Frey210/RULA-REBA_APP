@@ -163,7 +163,7 @@ def test_worker_status_and_delete_rules(client: TestClient, db_session: Session)
     assert guarded_delete.status_code == 409
 
 
-def test_pairing_and_session_lifecycle(client: TestClient) -> None:
+def test_pairing_and_session_lifecycle(client: TestClient, edge_stub) -> None:
     token = register_and_login(client)
 
     pairing_response = client.post("/api/v1/device-pairings", headers=auth_header(token))
@@ -176,8 +176,9 @@ def test_pairing_and_session_lifecycle(client: TestClient) -> None:
             "pairing_code": pairing_code,
             "cam_id": "CAM_01",
             "hostname": "ergoquipt-rr",
+            "device_id": "00000000-0000-4000-8000-000000000001",
             "device_type": "raspberry_pi_5_hailo8",
-            "metadata": {"hailort": "4.23.0"},
+            "metadata": {"hailort": "4.23.0", "edge_base_url": "http://edge.test"},
         },
     )
     assert complete_response.status_code == 200
@@ -252,8 +253,9 @@ def test_camera_node_rename_and_delete_are_user_scoped(client: TestClient) -> No
             "pairing_code": pairing_code,
             "cam_id": "CAM_01",
             "hostname": "ergoquipt-rr",
+            "device_id": "00000000-0000-4000-8000-000000000001",
             "device_type": "raspberry_pi_5_hailo8",
-            "metadata": {},
+            "metadata": {"edge_base_url": "http://edge.test"},
         },
     )
     assert complete_response.status_code == 200

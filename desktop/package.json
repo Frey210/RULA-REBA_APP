@@ -1,7 +1,7 @@
 {
   "name": "ergosight-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "ERGoSIGHT AI-Based Ergonomic Monitoring System",
   "author": "ERGoSIGHT",
   "type": "module",

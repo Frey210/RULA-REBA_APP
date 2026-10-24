@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from app.services.edge_devices import validate_edge_url
 
 
 class CameraNodeCreate(BaseModel):
@@ -13,6 +14,11 @@ class CameraNodeCreate(BaseModel):
 class CameraNodeUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=100)
     edge_base_url: str | None = Field(default=None, max_length=500)
+
+    @field_validator("edge_base_url")
+    @classmethod
+    def valid_url(cls, value):
+        return validate_edge_url(value) if value is not None else value
 
 
 class CameraNodeRead(BaseModel):

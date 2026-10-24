@@ -1,4 +1,5 @@
 from io import BytesIO
+import hashlib
 
 import httpx
 from PIL import Image, UnidentifiedImageError
@@ -10,6 +11,10 @@ from app.models.camera_node import CameraNode
 from app.models.ergonomic_event import ErgonomicEvent
 from app.models.session import Session
 from app.models.snapshot import Snapshot
+from app.models.detection import Detection
+from app.models.assessment import Assessment
+from app.services.edge_devices import edge_request
+from uuid import uuid4
 
 MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024
 
@@ -26,14 +31,22 @@ def capture_event_snapshot(
     if not edge_base_url:
         return None
 
+    detection = db.get(Detection, event.source_detection_id)
+    if detection is None or db.scalar(select(Assessment.id).where(Assessment.ergonomic_event_id == event.id).limit(1)):
+        return None
+    previous = db.scalar(select(Snapshot).where(Snapshot.ergonomic_event_id == event.id, Snapshot.detection_id == detection.id))
+    if previous and previous.file_path:
+        return previous
+    header = (detection.raw_payload or {}).get("event", {})
+    run_id = header.get("run_id")
+    if not run_id:
+        return None
     try:
-        response = httpx.get(
-            f"{edge_base_url}/snapshot/latest",
-            params={"overlay": "true", "quality": 76},
-            timeout=2.5,
-        )
-        response.raise_for_status()
-    except httpx.HTTPError:
+        response = edge_request(camera, "GET", f"/snapshot/frames/{detection.frame_id}",
+                                params={"run_id": run_id, "overlay": "true"}, timeout=2)
+        if response.headers.get("x-frame-id") != str(detection.frame_id) or response.headers.get("x-run-id") != run_id:
+            return None
+    except (httpx.HTTPError, ValueError):
         return None
 
     content = response.content
@@ -52,14 +65,12 @@ def capture_event_snapshot(
 
     directory = settings.media_root / "session-snapshots" / session.owner_user_id / session.id
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{event.id}.jpg"
+    path = directory / f"{uuid4()}.jpg"
     temporary = path.with_suffix(".upload")
     temporary.write_bytes(content)
     temporary.replace(path)
 
-    snapshot = db.scalar(
-        select(Snapshot).where(Snapshot.ergonomic_event_id == event.id).limit(1)
-    )
+    snapshot = previous
     if snapshot is None:
         snapshot = Snapshot(
             session_id=session.id,
@@ -69,7 +80,7 @@ def capture_event_snapshot(
             session_worker_id=event.session_worker_id,
             snapshot_type="event_evidence",
             file_path=str(path),
-            captured_at=event.started_at,
+            captured_at=detection.observed_at,
             metadata_json={},
         )
         db.add(snapshot)
@@ -80,6 +91,29 @@ def capture_event_snapshot(
         "height": height,
         "file_size": len(content),
         "capture_reason": capture_reason,
-        "source": "edge_latest_annotated_frame",
+        "source": "verified_source_frame",
+        "status": "ready",
+        "run_id": run_id,
+        "frame_id": detection.frame_id,
+        "checksum_sha256": hashlib.sha256(content).hexdigest(),
     }
     return snapshot
+
+
+def capture_pending_evidence() -> None:
+    from app.db.session import SessionLocal
+    with SessionLocal() as db:
+        jobs = db.scalars(select(Snapshot).where(
+            Snapshot.metadata_json["status"].as_string() == "pending"
+        ).limit(4)).all()
+        for job in jobs:
+            event = db.get(ErgonomicEvent, job.ergonomic_event_id)
+            if event is None or event.source_detection_id != job.detection_id:
+                job.metadata_json = {"status": "superseded"}
+                continue
+            session = db.get(Session, event.session_id)
+            camera = db.get(CameraNode, event.camera_node_id)
+            snapshot = capture_event_snapshot(db, session, camera, event)
+            if snapshot is None:
+                job.metadata_json = {"status": "unavailable", "reason": "Source frame expired or device unavailable"}
+        db.commit()

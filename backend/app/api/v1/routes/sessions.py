@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Annotated
 
 import httpx
+import threading
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
@@ -20,6 +22,7 @@ from app.models.review_item import ReviewItem
 from app.models.session import Session
 from app.models.session_worker import SessionWorker
 from app.models.snapshot import Snapshot
+from app.models.edge_event import EdgeEvent
 from app.models.user import User
 from app.models.worker import Worker
 from app.schemas.ergonomic_event import ErgonomicEventRead
@@ -27,8 +30,11 @@ from app.schemas.session import SessionCreate, SessionRead, SessionWorkerAssign,
 from app.schemas.session_summary import ScoreAggregate, SessionExposureSummary, WorkerExposureSummary
 from app.services.event_engine import backfill_session_events, resolve_active_events_for_session
 from app.services.session_codes import create_session_code
+from app.services.exposure_intervals import merged_duration_ms
+from app.services.edge_devices import device_state_lock
 
 router = APIRouter()
+session_control_lock = threading.RLock()
 
 
 @router.post("", response_model=SessionRead, status_code=status.HTTP_201_CREATED)
@@ -86,7 +92,7 @@ def delete_session(
     db: Annotated[DbSession, Depends(get_db)],
 ) -> Response:
     session = _get_owned_session(session_id, current_user, db)
-    if session.status == "running":
+    if session.status in {"running", "preparing", "stopping"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Stop the running session before deleting it",
@@ -112,6 +118,7 @@ def delete_session(
     db.execute(sql_delete(Detection).where(Detection.session_id == session.id))
     db.execute(sql_delete(Report).where(Report.session_id == session.id))
     db.execute(sql_delete(SessionWorker).where(SessionWorker.session_id == session.id))
+    db.execute(sql_delete(EdgeEvent).where(EdgeEvent.payload["session_id"].as_string().in_([session.id, session.session_code])))
     db.delete(session)
     db.commit()
 
@@ -126,21 +133,57 @@ def start_session(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[DbSession, Depends(get_db)],
 ) -> Session:
+    with session_control_lock, device_state_lock:
+        return _start_session(session_id, current_user, db)
+
+
+def _start_session(session_id: str, current_user: User, db: DbSession) -> Session:
     session = _get_owned_session(session_id, current_user, db)
-    if session.status not in {"created", "review_pending"}:
+    if session.status not in {"created", "review_pending", "failed"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session cannot be started")
+    cameras = _session_cameras(session, current_user, db)
+    if not cameras:
+        raise HTTPException(409, "Select and pair at least one camera before starting")
+    for other in db.scalars(select(Session).where(Session.status.in_(["preparing", "running", "stopping"]), Session.id != session.id)):
+        if set((other.metadata_json or {}).get("camera_node_ids", [])) & {c.cam_id for c in cameras}:
+            raise HTTPException(409, "A selected camera is already in another session")
+    session.status = "preparing"
+    session.metadata_json = {**(session.metadata_json or {}),
+                             "preparing_at": datetime.now(UTC).isoformat(),
+                             "edge_runs": {c.cam_id: str(uuid.uuid4()) for c in cameras}}
+    db.commit()
     edge_results = _start_edges_for_session(session, current_user, db)
-    session.status = "running"
-    session.started_at = datetime.now(UTC)
+    success = all(result["status"] == "started" for result in edge_results)
+    if not success:
+        _stop_edges_for_session(session, current_user, db)
+    session.status = "running" if success else "failed"
+    session.started_at = session.started_at or datetime.now(UTC)
     session.stopped_at = None
     session.metadata_json = {
         **(session.metadata_json or {}),
         "edge_start_results": edge_results,
         "edge_stop_results": [],
+        "lease_confirmed_at": datetime.now(UTC).isoformat(),
+        "operator_last_seen": datetime.now(UTC).isoformat(),
     }
     db.commit()
     db.refresh(session)
+    if not success:
+        details = "; ".join(f"{r['cam_id']}: {r['detail']}" for r in edge_results if r["status"] != "started")
+        raise HTTPException(503, f"Session did not start. {details}")
     return session
+
+
+@router.post("/{session_id}/operator-heartbeat", status_code=204)
+def operator_heartbeat(session_id: str, current_user: Annotated[User, Depends(get_current_user)],
+                       db: Annotated[DbSession, Depends(get_db)]) -> Response:
+    with session_control_lock:
+        session = _get_owned_session(session_id, current_user, db)
+        db.refresh(session)
+        if session.status in {"preparing", "running"}:
+            session.metadata_json = {**(session.metadata_json or {}), "operator_last_seen": datetime.now(UTC).isoformat()}
+            db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/{session_id}/stop", response_model=SessionRead)
@@ -149,17 +192,26 @@ def stop_session(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[DbSession, Depends(get_db)],
 ) -> Session:
+    with session_control_lock, device_state_lock:
+        return _stop_session(session_id, current_user, db)
+
+
+def _stop_session(session_id: str, current_user: User, db: DbSession) -> Session:
     session = _get_owned_session(session_id, current_user, db)
-    if session.status != "running":
+    if session.status not in {"running", "stopping", "preparing"}:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not running")
+    session.status = "stopping"
+    db.commit()
     edge_results = _stop_edges_for_session(session, current_user, db)
+    success = all(result["status"] == "stopped" for result in edge_results)
     stopped_at = datetime.now(UTC)
     resolve_active_events_for_session(db, session, stopped_at)
-    session.status = "review_pending"
+    session.status = "review_pending" if success else "stopping"
     session.stopped_at = stopped_at
     session.metadata_json = {
         **(session.metadata_json or {}),
         "edge_stop_results": edge_results,
+        "stop_requested_at": stopped_at.isoformat(),
     }
     db.commit()
     db.refresh(session)
@@ -196,7 +248,7 @@ def list_session_events(
         select(ErgonomicEvent, SessionWorker, Worker)
         .join(SessionWorker, ErgonomicEvent.session_worker_id == SessionWorker.id)
         .outerjoin(Worker, SessionWorker.worker_id == Worker.id)
-        .where(ErgonomicEvent.session_id == session.id)
+            .where(ErgonomicEvent.session_id == session.id, ErgonomicEvent.event_type.notin_(["worker_entered", "worker_left"]))
         .order_by(ErgonomicEvent.started_at.desc(), ErgonomicEvent.created_at.desc())
     ).all()
     reviewed_types: dict[str, list[str]] = {}
@@ -245,13 +297,18 @@ def get_session_summary(
         _worker_summary(session_worker, worker, events, reviewed_event_ids, now)
         for session_worker, worker in worker_rows
     ]
+    worker_keys = {row.id: row.worker_id or row.id for row, _ in worker_rows}
+    grouped_risk = {}
+    for event in events:
+        if event.event_type == "high_risk_posture":
+            grouped_risk.setdefault(worker_keys.get(event.session_worker_id, event.session_worker_id), []).append(event)
     return SessionExposureSummary(
         session_id=session.id,
-        worker_count=len(summaries),
+        worker_count=len(set(worker_keys.values())),
         event_count=len(events),
         high_risk_event_count=sum(row.high_risk_event_count for row in summaries),
         sustained_event_count=sum(row.sustained_event_count for row in summaries),
-        high_risk_duration_ms=sum(row.high_risk_duration_ms for row in summaries),
+        high_risk_duration_ms=sum(merged_duration_ms(group) for group in grouped_risk.values()),
         reviewed_event_count=len(reviewed_event_ids),
         workers=summaries,
     )
@@ -315,6 +372,8 @@ def _session_worker_read(session_worker: SessionWorker, worker: Worker | None) -
         worker_name=worker.name if worker else None,
         employee_number=worker.employee_number if worker else None,
         edge_worker_id=session_worker.edge_worker_id,
+        camera_node_id=session_worker.camera_node_id,
+        run_id=session_worker.run_id,
         tracking_id=session_worker.tracking_id,
         identity_status=session_worker.identity_status,
         reid_confidence=session_worker.reid_confidence,
@@ -421,6 +480,7 @@ def _metadata_datetime(value: object) -> datetime | None:
 
 
 def _start_edges_for_session(session: Session, current_user: User, db: DbSession) -> list[dict]:
+    from app.services.edge_devices import edge_request, refresh_camera
     cameras = _session_cameras(session, current_user, db)
     results = []
     for camera in cameras:
@@ -436,24 +496,29 @@ def _start_edges_for_session(session: Session, current_user: User, db: DbSession
             continue
 
         try:
-            response = httpx.post(
-                f"{edge_base_url}/detection/start",
-                json={"session_id": session.session_code},
-                timeout=5,
-            )
+            refresh_camera(camera)
+            if camera.status != "online" or not (camera.metadata_json or {}).get("health", {}).get("camera_available"):
+                raise ValueError("Camera unavailable. Connect its USB camera or run Scan LAN")
+            run_id = session.metadata_json["edge_runs"][camera.cam_id]
+            response = edge_request(camera, "POST", "/detection/start",
+                json={"session_id": session.session_code, "run_id": run_id}, timeout=16)
+            state = response.json()
+            if not state.get("ready") or not state.get("running") or state.get("run_id") != run_id or state.get("session_id") != session.session_code:
+                raise ValueError("Pipeline did not confirm this session")
             results.append(
                 {
                     "cam_id": camera.cam_id,
-                    "status": "started" if response.is_success else "error",
-                    "detail": response.text,
+                    "status": "started",
+                    "detail": "Camera ready",
                 }
             )
-        except httpx.HTTPError as exc:
-            results.append({"cam_id": camera.cam_id, "status": "error", "detail": str(exc)})
+        except (httpx.HTTPError, ValueError):
+            results.append({"cam_id": camera.cam_id, "status": "error", "detail": "Camera did not become ready. Check its connection, pairing, and USB camera."})
     return results
 
 
 def _stop_edges_for_session(session: Session, current_user: User, db: DbSession) -> list[dict]:
+    from app.services.edge_devices import edge_request
     cameras = _session_cameras(session, current_user, db)
     results = []
     for camera in cameras:
@@ -469,16 +534,22 @@ def _stop_edges_for_session(session: Session, current_user: User, db: DbSession)
             continue
 
         try:
-            response = httpx.post(f"{edge_base_url}/detection/stop", timeout=5)
+            state = edge_request(camera, "GET", "/detection/status").json()
+            expected_run = (session.metadata_json or {}).get("edge_runs", {}).get(camera.cam_id)
+            if state.get("running") and state.get("run_id") != expected_run:
+                raise ValueError("Camera is running a different session")
+            response = edge_request(camera, "POST", "/detection/stop", timeout=9)
+            if response.json().get("running"):
+                raise ValueError("Pipeline has not stopped")
             results.append(
                 {
                     "cam_id": camera.cam_id,
                     "status": "stopped" if response.is_success else "error",
-                    "detail": response.text,
+                    "detail": "Camera stopped",
                 }
             )
-        except httpx.HTTPError as exc:
-            results.append({"cam_id": camera.cam_id, "status": "error", "detail": str(exc)})
+        except (httpx.HTTPError, ValueError):
+            results.append({"cam_id": camera.cam_id, "status": "error", "detail": "Waiting for camera stop or lease expiry"})
     return results
 
 

@@ -17,6 +17,7 @@ from app.schemas.analytics import (
     WorstEventRow,
 )
 from app.schemas.session_summary import ScoreAggregate
+from app.services.exposure_intervals import merged_duration_ms
 
 
 def build_exposure_overview(
@@ -75,6 +76,7 @@ def build_exposure_overview(
     daily_states: dict[date, dict[str, Any]] = {}
     global_scores = _new_score_state()
     worst_events: list[WorstEventRow] = []
+    risk_groups = {}
 
     for session in sessions:
         day = _event_day(session.started_at or session.created_at)
@@ -105,6 +107,7 @@ def build_exposure_overview(
             _merge_score_stats(daily["scores"], score_stats)
             _merge_score_stats(global_scores, score_stats)
         elif event.event_type == "high_risk_posture":
+            risk_groups.setdefault(worker_key, []).append(event)
             duration_ms = _event_duration(event, session.stopped_at or now)
             for state in (worker_state, session_state, daily):
                 state["high_risk_event_count"] += 1
@@ -130,6 +133,13 @@ def build_exposure_overview(
             worker_state["sustained_event_count"] += 1
             session_state["sustained_event_count"] += 1
             daily["sustained_event_count"] += 1
+
+    for worker_key, group in risk_groups.items():
+        worker_states[worker_key]["high_risk_duration_ms"] = merged_duration_ms(group)
+    for session_id, state in session_states.items():
+        state["high_risk_duration_ms"] = sum(merged_duration_ms([event for event in group if event.session_id == session_id]) for group in risk_groups.values())
+    for day, state in daily_states.items():
+        state["high_risk_duration_ms"] = sum(merged_duration_ms([event for event in group if _event_day(event.started_at) == day]) for group in risk_groups.values())
 
     top_workers = sorted(
         (_worker_row(state) for state in worker_states.values()),

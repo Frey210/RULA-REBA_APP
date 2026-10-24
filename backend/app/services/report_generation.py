@@ -47,7 +47,7 @@ def generate_session_pdf_report(
     events = list(
         db.scalars(
             select(ErgonomicEvent)
-            .where(ErgonomicEvent.session_id == session.id)
+            .where(ErgonomicEvent.session_id == session.id, ErgonomicEvent.event_type.notin_(["worker_entered", "worker_left"]))
             .order_by(ErgonomicEvent.started_at.desc())
         )
     )

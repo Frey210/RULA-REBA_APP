@@ -2,6 +2,9 @@ import os
 from collections.abc import Generator
 
 import pytest
+import httpx
+from io import BytesIO
+from PIL import Image
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -42,3 +45,27 @@ def db_session() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+@pytest.fixture
+def edge_stub(monkeypatch):
+    state = {"running": False, "ready": False, "cam_id": "CAM_01", "camera_available": True}
+    device_id = "00000000-0000-4000-8000-000000000001"
+    buffer = BytesIO()
+    Image.new("RGB", (640, 360), color=(20, 90, 84)).save(buffer, "JPEG")
+
+    def request(method, url, **kwargs):
+        payload = kwargs.get("json", {})
+        if url.endswith("/detection/start"):
+            state.update(payload, running=True, ready=True)
+        if url.endswith("/detection/stop"):
+            state.update(running=False, ready=False)
+        headers = {"x-device-id": device_id}
+        if "/snapshot/frames/" in url:
+            headers.update({"content-type": "image/jpeg", "x-frame-id": url.rsplit("/", 1)[1],
+                            "x-run-id": kwargs["params"]["run_id"]})
+            return httpx.Response(200, content=buffer.getvalue(), headers=headers, request=httpx.Request(method, url))
+        return httpx.Response(200, json=state, headers=headers, request=httpx.Request(method, url))
+
+    monkeypatch.setattr("app.services.edge_devices.edge_http.request", request)
+    return state

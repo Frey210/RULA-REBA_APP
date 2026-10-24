@@ -9,11 +9,13 @@ from app.models.mixins import TimestampMixin, UuidPrimaryKeyMixin
 
 class SessionWorker(UuidPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "session_workers"
-    __table_args__ = (UniqueConstraint("session_id", "edge_worker_id"),)
+    __table_args__ = (UniqueConstraint("session_id", "camera_node_id", "run_id", "edge_worker_id", name="uq_session_worker_camera_run"),)
 
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False, index=True)
     worker_id: Mapped[str | None] = mapped_column(ForeignKey("workers.id"), index=True)
     edge_worker_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    camera_node_id: Mapped[str | None] = mapped_column(ForeignKey("camera_nodes.id"))
+    run_id: Mapped[str] = mapped_column(String(36), default="legacy", nullable=False)
     tracking_id: Mapped[int | None] = mapped_column(Integer)
     identity_status: Mapped[str] = mapped_column(String(50), default="unconfirmed", nullable=False)
     reid_confidence: Mapped[float | None] = mapped_column(Float)

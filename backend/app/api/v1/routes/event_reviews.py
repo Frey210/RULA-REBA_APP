@@ -25,6 +25,7 @@ from app.schemas.event_review import (
 )
 from app.services.scoring import calculate_score
 from app.services.snapshot_capture import capture_event_snapshot
+from app.services.pose_quality import missing_components
 
 router = APIRouter()
 
@@ -47,6 +48,8 @@ def get_event_detail(
     snapshots = db.scalars(
         select(Snapshot)
         .where(Snapshot.ergonomic_event_id == event.id)
+        .where(Snapshot.detection_id == event.source_detection_id)
+        .where(Snapshot.file_path != "")
         .order_by(Snapshot.captured_at.desc())
     )
     return EventDetailRead(
@@ -93,6 +96,20 @@ def save_event_review(
         for key, value in (metadata.get("angles") or {}).items()
         if isinstance(value, int | float)
     }
+    missing = missing_components(angles)
+    quality = metadata.get("assessment_quality") or {}
+    if quality.get("wrist_components_measured") == 0:
+        angles.pop("wrist_l", None)
+        angles.pop("wrist_r", None)
+    angles.update(payload.angle_overrides)
+    missing = missing_components(angles)
+    if missing:
+        raise HTTPException(409, "Cannot finalize an incomplete pose. Missing: " + ", ".join(sorted(missing)))
+    evidence = db.scalar(select(Snapshot.id).where(Snapshot.ergonomic_event_id == event.id,
+                                                  Snapshot.detection_id == detection.id, Snapshot.file_path != "",
+                                                  Snapshot.metadata_json["source"].as_string() == "verified_source_frame"))
+    if evidence is None:
+        raise HTTPException(409, "This posture has no verified frame evidence. Select another observation.")
     manual = _manual_inputs(assessment_type, payload)
     final_result = calculate_score(assessment_type, angles, manual)
     provisional = metadata.get(assessment_type)
@@ -127,6 +144,7 @@ def save_event_review(
         **final_result["breakdown"],
         "manual_inputs": manual,
         "assessment_quality": metadata.get("assessment_quality") or {},
+        "manual_angle_overrides": payload.angle_overrides,
     }
     if review is None:
         review = Assessment(
@@ -274,6 +292,7 @@ def _review_read(review: Assessment, db: DbSession) -> EventReviewRead:
         notes=review.review_notes,
         reviewed_by=activity.confirmed_by if activity else None,
         calculated_at=review.calculated_at,
+        angle_overrides=review.breakdown.get("manual_angle_overrides", {}),
     )
 
 

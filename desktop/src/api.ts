@@ -16,6 +16,8 @@ export type CameraNode = {
   metadata_json: {
     display_name?: string
     edge_base_url?: string
+    device_id?: string
+    health?: { camera_available?: boolean; ready?: boolean; frame_age_ms?: number | null }
     [key: string]: unknown
   }
 }
@@ -63,6 +65,8 @@ export type SessionWorkerRecord = {
   worker_name: string | null
   employee_number: string | null
   edge_worker_id: string
+  camera_node_id: string | null
+  run_id: string
   tracking_id: number | null
   identity_status: string
   reid_confidence: number | null
@@ -213,6 +217,7 @@ export type ReportRecord = {
 }
 
 export type EventReviewRecord = {
+  angle_overrides: Record<string, number>
   id: string
   assessment_type: 'rula' | 'reba'
   assessment_status: string
@@ -308,6 +313,10 @@ export async function apiRequest<T>(
       const parsed = JSON.parse(detailText) as { detail?: unknown }
       if (typeof parsed.detail === 'string') {
         message = parsed.detail
+      } else if (Array.isArray(parsed.detail)) {
+        message = parsed.detail.filter((item) => item && typeof item.msg === 'string')
+          .map((item) => `${Array.isArray(item.loc) ? String(item.loc.at(-1)) + ': ' : ''}${item.msg}`)
+          .join('; ') || 'Check the values you entered.'
       }
     } catch {
       message = detailText
@@ -322,9 +331,10 @@ export async function apiRequest<T>(
   return (await response.json()) as T
 }
 
-export async function apiBlob(path: string, token: string): Promise<Blob> {
+export async function apiBlob(path: string, token: string, signal?: AbortSignal): Promise<Blob> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: { Authorization: `Bearer ${token}` },
+    signal,
   })
   if (!response.ok) {
     throw new Error(await response.text() || `Request failed: ${response.status}`)
@@ -332,7 +342,7 @@ export async function apiBlob(path: string, token: string): Promise<Blob> {
   return response.blob()
 }
 
-export function liveWebSocketUrl(sessionId: string, token: string): string {
+export function liveWebSocketUrl(sessionId: string): string {
   const base = API_BASE_URL.replace(/^http/, 'ws')
-  return `${base}/ws/v1/sessions/${encodeURIComponent(sessionId)}/live?token=${encodeURIComponent(token)}`
+  return `${base}/ws/v1/sessions/${encodeURIComponent(sessionId)}/live`
 }

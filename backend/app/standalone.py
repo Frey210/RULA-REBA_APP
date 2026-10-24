@@ -15,6 +15,8 @@ def bundled_path(name: str) -> Path:
 
 
 def run() -> None:
+    from app.services.database_backup import backup_database
+    backup_database()
     config = Config(str(bundled_path("alembic.ini")))
     config.set_main_option("script_location", str(bundled_path("alembic")))
     command.upgrade(config, "head")

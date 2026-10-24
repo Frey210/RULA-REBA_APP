@@ -9,14 +9,13 @@ from app.models.detection import Detection
 from app.models.ergonomic_event import ErgonomicEvent
 from app.models.session import Session
 from app.models.session_worker import SessionWorker
+from app.models.assessment import Assessment
 from app.schemas.edge import EdgeDetection
 from app.services.scoring import calculate_score
 
 HIGH_RISK_EVENT = "high_risk_posture"
 SUSTAINED_POSTURE_EVENT = "sustained_high_risk"
 WORKER_OBSERVED_EVENT = "worker_observed"
-WORKER_ENTERED_EVENT = "worker_entered"
-WORKER_LEFT_EVENT = "worker_left"
 PRESENCE_TIMEOUT = timedelta(seconds=3)
 HIGH_RISK_RELEASE_GRACE = timedelta(seconds=1)
 SUSTAINED_POSTURE_THRESHOLD = timedelta(seconds=10)
@@ -40,9 +39,15 @@ def process_detection_for_events(
     assessments = _assessments_from_detection(edge_detection)
     primary = max(assessments, key=lambda item: item["severity_rank"], default=None)
     active_high_risk = _active_event(db, session_worker.id, HIGH_RISK_EVENT)
+    if active_high_risk:
+        previous_high = _parse_datetime((active_high_risk.metadata_json or {}).get("last_high_at"))
+        if previous_high and _aware(detection_row.observed_at) - previous_high > PRESENCE_TIMEOUT:
+            _resolve_event(active_high_risk, previous_high, active_high_risk.last_detection_id)
+            active_high_risk = None
     if primary is None or not primary["is_high_risk"]:
-        if active_high_risk and _release_grace_elapsed(active_high_risk, detection_row.observed_at):
-            _resolve_event(active_high_risk, detection_row.observed_at, detection_row.id)
+        if active_high_risk and (primary is None or _release_grace_elapsed(active_high_risk, detection_row.observed_at)):
+            last = _parse_datetime((active_high_risk.metadata_json or {}).get("last_high_at"))
+            _resolve_event(active_high_risk, last or detection_row.observed_at, active_high_risk.last_detection_id)
         return created_events
 
     if active_high_risk is None:
@@ -52,6 +57,7 @@ def process_detection_for_events(
             session_worker_id=session_worker.id,
             event_type=HIGH_RISK_EVENT,
             status="active",
+            duration_ms=0,
             severity=primary["severity"],
             started_at=detection_row.observed_at,
             score_type=primary["score_type"],
@@ -72,6 +78,9 @@ def process_detection_for_events(
         return created_events
 
     metadata = dict(active_high_risk.metadata_json or {})
+    last_high = _parse_datetime(metadata.get("last_high_at"))
+    delta = _duration_ms(last_high, detection_row.observed_at) if last_high else 0
+    active_high_risk.duration_ms = (active_high_risk.duration_ms or 0) + delta
     metadata["last_high_at"] = detection_row.observed_at.isoformat()
     metadata["score_stats"] = _score_stats(metadata.get("score_stats"), assessments)
     if _is_more_severe(primary, active_high_risk):
@@ -80,6 +89,9 @@ def process_detection_for_events(
         active_high_risk.risk_level = primary["risk_level"]
         active_high_risk.severity = primary["severity"]
         metadata["assessment"] = primary["raw"]
+        if not db.scalar(select(Assessment.id).where(Assessment.ergonomic_event_id == active_high_risk.id).limit(1)):
+            active_high_risk.source_detection_id = detection_row.id
+            created_events.append(active_high_risk)
     active_high_risk.metadata_json = metadata
     active_high_risk.last_detection_id = detection_row.id
     active_high_risk.confidence = edge_detection.confidence
@@ -129,15 +141,10 @@ def process_presence_timeouts(db: DbSession, session: Session, observed_at: date
         last_seen = _parse_datetime(metadata.get("last_seen_at"))
         if last_seen is None or _aware(observed_at) - last_seen < PRESENCE_TIMEOUT:
             continue
-        left_at = last_seen + PRESENCE_TIMEOUT
-        db.add(
-            _presence_transition(
-                observed_event,
-                WORKER_LEFT_EVENT,
-                left_at,
-                observed_event.last_detection_id,
-            )
-        )
+        high = _active_event(db, observed_event.session_worker_id, HIGH_RISK_EVENT)
+        if high:
+            last_high = _parse_datetime((high.metadata_json or {}).get("last_high_at"))
+            _resolve_event(high, last_high or last_seen, high.last_detection_id)
         metadata["presence_active"] = False
         observed_event.metadata_json = metadata
         transitions += 1
@@ -153,7 +160,8 @@ def resolve_active_events_for_session(db: DbSession, session: Session, ended_at:
         )
     )
     for event in active_events:
-        _resolve_event(event, ended_at, event.last_detection_id)
+        last = _parse_datetime((event.metadata_json or {}).get("last_high_at"))
+        _resolve_event(event, last or ended_at, event.last_detection_id)
 
     observed_events = db.scalars(
         select(ErgonomicEvent).where(
@@ -165,19 +173,17 @@ def resolve_active_events_for_session(db: DbSession, session: Session, ended_at:
         metadata = dict(observed_event.metadata_json or {})
         if not metadata.get("presence_active"):
             continue
-        db.add(
-            _presence_transition(
-                observed_event,
-                WORKER_LEFT_EVENT,
-                ended_at,
-                observed_event.last_detection_id,
-            )
-        )
         metadata["presence_active"] = False
         observed_event.metadata_json = metadata
 
 
 def backfill_session_events(db: DbSession, session: Session) -> int:
+    from app.services.detection_ingest import recording_write_lock
+    with recording_write_lock:
+        return _backfill_session_events(db, session)
+
+
+def _backfill_session_events(db: DbSession, session: Session) -> int:
     """Materialize events for detections recorded before the event engine existed."""
     if db.scalar(
         select(ErgonomicEvent.id).where(ErgonomicEvent.session_id == session.id).limit(1)
@@ -272,7 +278,19 @@ def _update_worker_observation(
         db.add(event)
 
     metadata = dict(event.metadata_json or {})
-    was_present = bool(metadata.get("presence_active"))
+    previous_seen = _parse_datetime(metadata.get("last_seen_at"))
+    delta = _duration_ms(previous_seen, detection_row.observed_at) if previous_seen else 0
+    if delta <= int(PRESENCE_TIMEOUT.total_seconds() * 1000):
+        event.duration_ms = (event.duration_ms or 0) + delta
+    current_source = db.get(Detection, event.source_detection_id) if event.source_detection_id else None
+    source_metadata = (current_source.raw_payload or {}).get("detection", {}).get("metadata", {}) if current_source else {}
+    new_rank = _evidence_rank(edge_detection.metadata)
+    old_rank = _evidence_rank(source_metadata)
+    changed = not created and new_rank > old_rank and not db.scalar(
+        select(Assessment.id).where(Assessment.ergonomic_event_id == event.id).limit(1))
+    if changed:
+        event.source_detection_id = detection_row.id
+        event.camera_node_id = camera.id
     metadata.update(
         {
             "edge_worker_id": edge_detection.worker_id,
@@ -287,43 +305,19 @@ def _update_worker_observation(
     )
     event.metadata_json = metadata
     event.ended_at = detection_row.observed_at
-    event.duration_ms = _duration_ms(event.started_at, detection_row.observed_at)
     event.last_detection_id = detection_row.id
     event.confidence = edge_detection.confidence
 
-    if not was_present:
-        db.add(
-            _presence_transition(
-                event,
-                WORKER_ENTERED_EVENT,
-                detection_row.observed_at,
-                detection_row.id,
-            )
-        )
-    return event if created else None
+    return event if created or changed else None
 
 
-def _presence_transition(
-    observed_event: ErgonomicEvent,
-    event_type: str,
-    occurred_at: datetime,
-    detection_id: str | None,
-) -> ErgonomicEvent:
-    return ErgonomicEvent(
-        session_id=observed_event.session_id,
-        camera_node_id=observed_event.camera_node_id,
-        session_worker_id=observed_event.session_worker_id,
-        event_type=event_type,
-        status="resolved",
-        severity="info",
-        started_at=occurred_at,
-        ended_at=occurred_at,
-        duration_ms=0,
-        source_detection_id=detection_id,
-        last_detection_id=detection_id,
-        confidence=observed_event.confidence,
-        metadata_json={"edge_worker_id": (observed_event.metadata_json or {}).get("edge_worker_id")},
-    )
+def _evidence_rank(metadata: dict) -> tuple:
+    from app.services.pose_quality import missing_components
+    angles = metadata.get("angles") or {}
+    completeness = 10 - len(missing_components(angles))
+    score = max((value.get("score", 0) for key in ("rula", "reba")
+                 if isinstance(value := metadata.get(key), dict)), default=0)
+    return completeness, score
 
 
 def _active_event(db: DbSession, session_worker_id: str, event_type: str) -> ErgonomicEvent | None:
@@ -340,7 +334,8 @@ def _resolve_event(event: ErgonomicEvent, ended_at: datetime, last_detection_id:
     event.status = "resolved"
     event.ended_at = ended_at
     event.last_detection_id = last_detection_id
-    event.duration_ms = _duration_ms(event.started_at, ended_at)
+    if event.duration_ms is None:
+        event.duration_ms = _duration_ms(event.started_at, ended_at)
 
 
 def _release_grace_elapsed(event: ErgonomicEvent, observed_at: datetime) -> bool:
@@ -374,6 +369,9 @@ def _score_stats(existing: Any, assessments: list[dict[str, Any]]) -> dict[str, 
 
 
 def _assessments_from_detection(detection: EdgeDetection) -> list[dict[str, Any]]:
+    from app.services.pose_quality import BODY_COMPONENTS, missing_components
+    if any(key in BODY_COMPONENTS for key in missing_components(detection.metadata.get("angles") or {})):
+        return []
     assessments = [
         assessment
         for score_type in ("reba", "rula")

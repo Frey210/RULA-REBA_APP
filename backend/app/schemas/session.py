@@ -32,6 +32,8 @@ class SessionWorkerRead(BaseModel):
     worker_name: str | None = None
     employee_number: str | None = None
     edge_worker_id: str
+    camera_node_id: str | None = None
+    run_id: str = "legacy"
     tracking_id: int | None
     identity_status: str
     reid_confidence: float | None

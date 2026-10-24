@@ -1,4 +1,7 @@
 from fastapi import FastAPI
+import asyncio
+import logging
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
@@ -6,8 +9,38 @@ from app.api.ws import ws_router
 from app.core.config import settings
 
 
+@asynccontextmanager
+async def lifespan(app):
+    from app.services.device_monitor import monitor_devices
+
+    async def monitor():
+        while True:
+            try:
+                await asyncio.to_thread(monitor_devices)
+            except Exception:
+                logging.getLogger(__name__).exception("Device monitor failed")
+            await asyncio.sleep(3)
+
+    task = asyncio.create_task(monitor())
+
+    async def evidence():
+        from app.services.snapshot_capture import capture_pending_evidence
+        while True:
+            try:
+                await asyncio.to_thread(capture_pending_evidence)
+            except Exception:
+                logging.getLogger(__name__).exception("Evidence capture failed")
+            await asyncio.sleep(0.2)
+
+    evidence_task = asyncio.create_task(evidence())
+    yield
+    task.cancel()
+    evidence_task.cancel()
+    await asyncio.gather(task, evidence_task, return_exceptions=True)
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title=settings.app_name, version="0.1.0")
+    app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,

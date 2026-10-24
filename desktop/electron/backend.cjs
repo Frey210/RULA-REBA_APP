@@ -28,7 +28,7 @@ async function main() {
 
   child = spawn(
     pythonPath,
-    ['-m', 'alembic', 'upgrade', 'head'],
+    ['-c', "from app.services.database_backup import backup_database; backup_database(); from alembic.config import main; main(argv=['upgrade', 'head'])"],
     {
       cwd: backendDir,
       env: {
@@ -99,7 +99,7 @@ async function hasRequiredApi() {
     const response = await fetch('http://127.0.0.1:8000/openapi.json')
     if (!response.ok) return false
     const schema = await response.json()
-    return Boolean(schema.paths?.['/api/v1/sessions/{session_id}/events'])
+    return Boolean(schema.paths?.['/api/v1/camera-nodes/{camera_node_id}/frame'])
   } catch {
     return false
   }
