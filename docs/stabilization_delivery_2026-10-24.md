@@ -169,6 +169,21 @@ akurasi skor ergonomi. Mulai dengan satu worker dan satu kamera.
 
 ### Validasi Hardware
 
+#### Ukuran Preview Stabil
+
+Grid preview diperbaiki agar isi Detection Insights tidak mengubah lebar/tinggi
+kamera. Preview tetap 16:9; panel data memakai lebar kolom terbatas dan scroll
+internal. Grid sudut menyesuaikan ruang panel, tanpa memperbesar preview.
+
+Regresi browser `desktop/tests/livePreviewLayout.browser.js` mereproduksi bug lama
+(lebar 623.5 menjadi 922 px ketika worker muncul). Setelah perbaikan, ukuran dan
+posisi preview tetap pada transisi 0/1/6/0 worker di viewport 1440, 1280, dan 1120
+px, termasuk pergantian ukuran gambar sumber. Tidak ada overlap atau overflow
+horizontal. Jalankan dengan Vite pada 5173 dan
+`playwright-cli.cmd run-code --filename=desktop/tests/livePreviewLayout.browser.js`
+setelah membuka browser Playwright. Tes memakai data sintetis tanpa mengubah sesi
+atau database pengguna. Installer lama belum memuat perbaikan CSS ini.
+
 #### Uji Sesi Aktual CAM_02
 
 - Sesi `SESSION_20261024_004` berhasil menjalankan pipeline. Awalnya ingest ditolak:

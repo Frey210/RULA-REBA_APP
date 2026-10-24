@@ -459,20 +459,20 @@
 
 .liveGrid {
   display: grid;
-  grid-template-columns: minmax(460px, 1.35fr) minmax(360px, 0.85fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.85fr);
   gap: 16px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .livePreview {
-  min-height: 360px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
   aspect-ratio: 16 / 9;
-  padding: 18px;
   border: 1px solid #dde2e4;
   border-radius: 8px;
   background: #f9fafb;
-  display: grid;
-  place-items: center;
+  display: block;
   overflow: hidden;
 }
 
@@ -485,6 +485,8 @@
 }
 
 .insightPanel {
+  width: 100%;
+  min-width: 0;
   min-height: 360px;
   max-height: 540px;
   padding: 18px;
@@ -495,6 +497,8 @@
   flex-direction: column;
   gap: 14px;
   overflow: auto;
+  overflow-wrap: anywhere;
+  scrollbar-gutter: stable;
 }
 
 .emptyInsight {
@@ -547,6 +551,10 @@
 
 .angleGrid {
   grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.insightPanel .angleGrid {
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
 }
 
 .insightValue {
@@ -655,7 +663,6 @@
     grid-template-columns: 1fr;
   }
 
-  .livePreview,
   .insightPanel {
     min-height: 300px;
   }
