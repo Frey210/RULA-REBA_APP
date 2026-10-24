@@ -47,6 +47,7 @@ import {
   Square,
   ClipboardCheck,
   FileText,
+  FileArchive,
   History,
   Download,
   Eye,
@@ -1707,7 +1708,27 @@ function SettingsPage({
   const [networkLoading, setNetworkLoading] = useState(false)
   const [networkMessage, setNetworkMessage] = useState<string | null>(null)
   const [networkError, setNetworkError] = useState(false)
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false)
   const isElectron = Boolean(window.ergoquipt)
+
+  async function exportDiagnostics() {
+    setExportingDiagnostics(true)
+    try {
+      const blob = await apiBlob('/api/v1/diagnostics', token)
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = 'ergosight-diagnostics.zip'
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Diagnostic export failed. Try again.')
+    } finally {
+      setExportingDiagnostics(false)
+    }
+  }
 
   async function createPairing() {
     setLoading(true)
@@ -1922,7 +1943,12 @@ function SettingsPage({
 
   return (
     <Stack spacing={3}>
-      <PageTitle title="Devices" action={<Button onClick={refreshData}>Refresh</Button>} />
+      <PageTitle title="Devices" action={<Stack direction="row" spacing={1}>
+        <Button startIcon={<Download size={16} />} disabled={exportingDiagnostics} onClick={() => void exportDiagnostics()}>
+          {exportingDiagnostics ? 'Exporting…' : 'Diagnostics'}
+        </Button>
+        <Button onClick={refreshData}>Refresh</Button>
+      </Stack>} />
       <Paper className="panel" elevation={0}>
         <Typography variant="h6">Add Edge Camera</Typography>
         <Box className="pairingSteps" sx={{ my: 2 }}>
@@ -2803,11 +2829,12 @@ function ReportsPage({
   token: string
   sessions: SessionRecord[]
 }) {
-  const reportableSessions = sessions.filter((session) => session.status !== 'running')
+  const reportableSessions = sessions.filter((session) => !['preparing', 'running', 'stopping'].includes(session.status))
   const [selectedSessionId, setSelectedSessionId] = useState(reportableSessions[0]?.id ?? '')
   const [reports, setReports] = useState<ReportRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [downloading, setDownloading] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
   const selectedSession = sessions.find((session) => session.id === selectedSessionId)
@@ -2830,8 +2857,8 @@ function ReportsPage({
   }, [loadReports])
 
   useEffect(() => {
-    if (!selectedSessionId && reportableSessions.length) {
-      setSelectedSessionId(reportableSessions[0].id)
+    if (!reportableSessions.some((session) => session.id === selectedSessionId)) {
+      setSelectedSessionId(reportableSessions[0]?.id ?? '')
     }
   }, [reportableSessions, selectedSessionId])
 
@@ -2854,20 +2881,24 @@ function ReportsPage({
     }
   }
 
-  async function downloadReport(report: ReportRecord) {
-    if (!report.download_url) return
+  async function downloadReport(report: ReportRecord, archive = false) {
+    const endpoint = archive ? report.archive_url : report.download_url
+    if (!endpoint || downloading) return
+    setDownloading(`${report.id}:${archive ? 'zip' : 'pdf'}`)
     try {
-      const blob = await apiBlob(report.download_url, token)
+      const blob = await apiBlob(endpoint, token)
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `${report.metadata_json.session_code ?? 'session'}_ergonomic_report.pdf`
+      anchor.download = `${report.metadata_json.session_code ?? 'session'}_${report.id}.${archive ? 'zip' : 'pdf'}`
       document.body.appendChild(anchor)
       anchor.click()
       anchor.remove()
-      URL.revokeObjectURL(url)
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Failed to download report.')
+    } finally {
+      setDownloading(null)
     }
   }
 
@@ -2880,10 +2911,7 @@ function ReportsPage({
       <Paper className="panel" elevation={0}>
         <Box className="reportsHeader">
           <Box>
-            <Typography variant="h6">Generate Session PDF</Typography>
-            <Typography variant="body2" color="text.secondary">
-              Export review evidence, manual scores, event timeline, and selected snapshots.
-            </Typography>
+            <Typography variant="h6">Session Documentation</Typography>
           </Box>
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
             <TextField
@@ -2892,7 +2920,7 @@ function ReportsPage({
               label="Session"
               value={selectedSessionId}
               onChange={(event) => setSelectedSessionId(event.target.value)}
-              sx={{ minWidth: 320 }}
+              sx={{ minWidth: 220, maxWidth: '100%' }}
             >
               {reportableSessions.map((session) => (
                 <MenuItem key={session.id} value={session.id}>
@@ -2903,10 +2931,10 @@ function ReportsPage({
             <Button
               variant="contained"
               startIcon={<FileText size={16} />}
-              disabled={!selectedSessionId || generating}
+              disabled={!reportableSessions.some((session) => session.id === selectedSessionId) || generating}
               onClick={generateReport}
             >
-              Generate PDF
+              {generating ? 'Generating…' : 'Generate Report'}
             </Button>
           </Stack>
         </Box>
@@ -2942,18 +2970,24 @@ function ReportsPage({
                   </Typography>
                 </Box>
                 <Box className="reportStats">
-                  <Chip size="small" label={`${report.metadata_json.worker_count ?? 0} workers`} />
+                  <Chip size="small" label={`${report.metadata_json.worker_count ?? 0} tracks`} />
                   <Chip size="small" label={`${report.metadata_json.event_count ?? 0} events`} />
                   <Chip size="small" label={`${report.metadata_json.reviewed_assessment_count ?? 0} reviewed`} />
+                  <Chip size="small" label={`${report.metadata_json.photo_count ?? 0} photos`} />
+                  {Number(report.metadata_json.omitted_photo_count ?? 0) > 0 ? <Chip size="small" color="warning" label={`${report.metadata_json.omitted_photo_count} photo${report.metadata_json.omitted_photo_count === 1 ? '' : 's'} unavailable`} /> : null}
                 </Box>
                 <Button
                   size="small"
                   startIcon={<Download size={16} />}
-                  disabled={!report.download_url}
+                  disabled={!report.download_url || downloading !== null}
                   onClick={() => void downloadReport(report)}
                 >
-                  Download
+                  {downloading === `${report.id}:pdf` ? 'Downloading…' : 'PDF'}
                 </Button>
+                {report.archive_url ? <Button size="small" startIcon={<FileArchive size={16} />}
+                  disabled={downloading !== null} onClick={() => void downloadReport(report, true)}>
+                  {downloading === `${report.id}:zip` ? 'Downloading…' : 'ZIP + Photos'}
+                </Button> : null}
               </Box>
             ))}
           </Box>

@@ -7,6 +7,7 @@ $alembic = Join-Path $backend 'alembic'
 $alembicIni = Join-Path $backend 'alembic.ini'
 $entrypoint = Join-Path $backend 'app\standalone.py'
 $icon = Join-Path $root 'desktop\build\icon.ico'
+$assets = Join-Path $backend 'assets'
 
 if (-not (Test-Path -LiteralPath $python)) {
     throw "Backend virtual environment not found at $python"
@@ -22,6 +23,8 @@ try {
         --icon $icon `
         --add-data "$alembic;alembic" `
         --add-data "$alembicIni;." `
+        --add-data "$assets;assets" `
+        --collect-data reportlab `
         --collect-all uvicorn `
         --hidden-import passlib.handlers.bcrypt `
         --hidden-import app.db.base `

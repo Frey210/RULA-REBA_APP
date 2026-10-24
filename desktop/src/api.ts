@@ -215,6 +215,7 @@ export type ReportRecord = {
     [key: string]: unknown
   }
   download_url: string | null
+  archive_url?: string | null
 }
 
 export type EventReviewRecord = {
@@ -338,7 +339,8 @@ export async function apiBlob(path: string, token: string, signal?: AbortSignal)
     signal,
   })
   if (!response.ok) {
-    throw new Error(await response.text() || `Request failed: ${response.status}`)
+    const body = await response.json().catch(() => null) as { detail?: unknown } | null
+    throw new Error(typeof body?.detail === 'string' ? body.detail : 'Download failed. Check the connection and try again.')
   }
   return response.blob()
 }

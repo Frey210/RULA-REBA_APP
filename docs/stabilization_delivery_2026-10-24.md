@@ -1,5 +1,9 @@
 # ERGoSIGHT 0.2.0 - Stabilisasi Deteksi
 
+Pembaruan terbaru: [delivery 0.2.1](stabilization_followup_2026-10-24.md).
+Catatan installer/clock manual di bawah adalah histori 0.2.0, bukan instruksi
+rilis terkini. Gunakan 0.2.1 untuk laporan lengkap dan profil source/installer.
+
 Implementasi dari [audit 24 Oktober 2026](audit_detection_recording_2026-10-24.md).
 Dokumen ini membedakan perubahan kode dari validasi perangkat yang masih diperlukan.
 

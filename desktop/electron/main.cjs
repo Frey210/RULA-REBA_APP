@@ -1,9 +1,9 @@
 const { app, BrowserWindow, dialog, ipcMain } = require('electron')
 const { spawn } = require('node:child_process')
-const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { installedEnvironment, backendIsReady } = require('./backend-profile.cjs')
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 let backendProcess = null
@@ -40,23 +40,19 @@ function createWindow() {
 }
 
 async function startPackagedBackend() {
-  if (await backendIsReady()) return
+  const dataDir = app.getPath('userData')
+  const environment = installedEnvironment(dataDir, true)
+  if (await backendIsReady(environment)) return
 
   const executable = path.join(process.resourcesPath, 'backend', 'ergosight-backend.exe')
   if (!fs.existsSync(executable)) {
     throw new Error(`Bundled backend not found: ${executable}`)
   }
 
-  const dataDir = app.getPath('userData')
   const mediaDir = path.join(dataDir, 'media')
   const logDir = path.join(dataDir, 'logs')
   fs.mkdirSync(mediaDir, { recursive: true })
   fs.mkdirSync(logDir, { recursive: true })
-
-  const secretPath = path.join(dataDir, '.jwt-secret')
-  if (!fs.existsSync(secretPath)) {
-    fs.writeFileSync(secretPath, crypto.randomBytes(48).toString('hex'), { encoding: 'utf8', mode: 0o600 })
-  }
 
   backendLogFd = fs.openSync(path.join(logDir, 'backend.log'), 'a')
   backendProcess = spawn(executable, [], {
@@ -65,9 +61,7 @@ async function startPackagedBackend() {
       ...process.env,
       APP_NAME: 'ERGoSIGHT Backend',
       ENVIRONMENT: 'production',
-      DATABASE_URL: `sqlite:///${path.join(dataDir, 'ergosight.sqlite3').replaceAll('\\', '/')}`,
-      MEDIA_ROOT: mediaDir,
-      JWT_SECRET_KEY: fs.readFileSync(secretPath, 'utf8').trim(),
+      ...environment,
     },
     stdio: ['ignore', backendLogFd, backendLogFd],
     windowsHide: true,
@@ -78,24 +72,11 @@ async function startPackagedBackend() {
   })
 
   for (let attempt = 0; attempt < 60; attempt += 1) {
-    if (await backendIsReady()) return
+    if (await backendIsReady(environment)) return
     if (!backendProcess) break
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
   throw new Error(`Backend did not start. See ${path.join(logDir, 'backend.log')}`)
-}
-
-async function backendIsReady() {
-  try {
-    const response = await fetch('http://127.0.0.1:8000/openapi.json', {
-      signal: AbortSignal.timeout(800),
-    })
-    if (!response.ok) return false
-    const schema = await response.json()
-    return Boolean(schema.paths?.['/api/v1/camera-nodes/{camera_node_id}/frame'])
-  } catch {
-    return false
-  }
 }
 
 function stopPackagedBackend() {

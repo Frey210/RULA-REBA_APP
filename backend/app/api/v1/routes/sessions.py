@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Annotated
 
 import httpx
@@ -106,6 +108,7 @@ def delete_session(
             *(snapshot.file_path for snapshot in snapshots),
             *(snapshot.thumbnail_path for snapshot in snapshots),
             *(report.file_path for report in reports),
+            *((report.metadata_json or {}).get("archive_path") for report in reports),
         )
         if path
     ]
@@ -482,39 +485,51 @@ def _metadata_datetime(value: object) -> datetime | None:
 def _start_edges_for_session(session: Session, current_user: User, db: DbSession) -> list[dict]:
     from app.services.edge_devices import edge_request, refresh_camera
     cameras = _session_cameras(session, current_user, db)
-    results = []
+    session_code = session.session_code
+    run_ids = session.metadata_json["edge_runs"]
+    results = {}
+    targets = {}
     for camera in cameras:
-        edge_base_url = (camera.metadata_json or {}).get("edge_base_url")
-        if not edge_base_url:
-            results.append(
-                {
-                    "cam_id": camera.cam_id,
-                    "status": "skipped",
-                    "detail": "Camera node does not have edge_base_url metadata",
-                }
-            )
-            continue
+        refresh_camera(camera)
+        results[camera.cam_id] = {"cam_id": camera.cam_id, "status": "error",
+            "detail": "Camera did not become ready. Check its connection, pairing, and USB camera."}
+        if camera.status == "online" and (camera.metadata_json or {}).get("health", {}).get("camera_available"):
+            # HTTP workers receive plain connection data, never the shared SQLAlchemy session/models.
+            targets[camera.cam_id] = SimpleNamespace(id=camera.id, cam_id=camera.cam_id, owner_user_id=camera.owner_user_id,
+                node_credential_hash=camera.node_credential_hash, metadata_json=dict(camera.metadata_json))
+    if len(targets) != len(cameras):
+        return list(results.values())
 
+    def start(cam_id):
+        run_id = run_ids[cam_id]
         try:
-            refresh_camera(camera)
-            if camera.status != "online" or not (camera.metadata_json or {}).get("health", {}).get("camera_available"):
-                raise ValueError("Camera unavailable. Connect its USB camera or run Scan LAN")
-            run_id = session.metadata_json["edge_runs"][camera.cam_id]
+            camera = targets[cam_id]
             response = edge_request(camera, "POST", "/detection/start",
-                json={"session_id": session.session_code, "run_id": run_id}, timeout=16)
+                json={"session_id": session_code, "run_id": run_id,
+                      "backend_timestamp_ms": int(datetime.now(UTC).timestamp() * 1000)}, timeout=16)
             state = response.json()
-            if not state.get("ready") or not state.get("running") or state.get("run_id") != run_id or state.get("session_id") != session.session_code:
+            if not state.get("ready") or not state.get("running") or state.get("run_id") != run_id or state.get("session_id") != session_code:
                 raise ValueError("Pipeline did not confirm this session")
-            results.append(
-                {
-                    "cam_id": camera.cam_id,
-                    "status": "started",
-                    "detail": "Camera ready",
-                }
-            )
+            return {"cam_id": cam_id, "status": "started", "detail": "Camera ready"}
         except (httpx.HTTPError, ValueError):
-            results.append({"cam_id": camera.cam_id, "status": "error", "detail": "Camera did not become ready. Check its connection, pairing, and USB camera."})
-    return results
+            return results[cam_id]
+
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="camera-start") as pool:
+        pending = {pool.submit(start, cam_id) for cam_id in targets}
+        while pending:
+            completed, pending = wait(pending, timeout=3, return_when=FIRST_COMPLETED)
+            for future in completed:
+                result = future.result()
+                results[result["cam_id"]] = result
+            for cam_id, result in results.items():
+                if result["status"] != "started":
+                    continue
+                try:
+                    edge_request(targets[cam_id], "POST", "/detection/lease", timeout=1.2,
+                                 json={"session_id": session_code, "run_id": run_ids[cam_id]})
+                except (httpx.HTTPError, ValueError):
+                    results[cam_id] = {"cam_id": cam_id, "status": "error", "detail": "Camera lost readiness during startup. Check its connection and retry."}
+    return list(results.values())
 
 
 def _stop_edges_for_session(session: Session, current_user: User, db: DbSession) -> list[dict]:
@@ -568,7 +583,10 @@ def _session_cameras(session: Session, current_user: User, db: DbSession) -> lis
 
 
 def _remove_media_file(file_path: str) -> None:
-    path = Path(file_path)
+    from app.core.config import settings
+    path = Path(file_path).resolve()
+    if not path.is_relative_to(settings.media_root.resolve()):
+        return
     try:
         path.unlink(missing_ok=True)
     except OSError:

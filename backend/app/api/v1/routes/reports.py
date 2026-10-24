@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,7 +12,7 @@ from app.models.session import Session
 from app.models.user import User
 from app.schemas.report import ReportCreateResponse, ReportRead
 from app.services.event_engine import backfill_session_events
-from app.services.report_generation import generate_session_pdf_report
+from app.services.report_generation import generate_session_pdf_report, media_path
 
 router = APIRouter()
 
@@ -40,7 +39,7 @@ def create_session_report(
     session = db.get(Session, session_id)
     if session is None or session.owner_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    if session.status == "running":
+    if session.status in {"preparing", "running", "stopping"}:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Stop the running session before generating a report",
@@ -61,8 +60,9 @@ def download_report(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
     if not report.file_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report file not found")
-    path = Path(report.file_path)
-    if not path.is_file():
+    try:
+        path = media_path(report.file_path)
+    except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report file not found")
     filename = path.name
     return FileResponse(
@@ -73,6 +73,23 @@ def download_report(
     )
 
 
+@router.get("/{report_id}/archive")
+def download_archive(
+    report_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[DbSession, Depends(get_db)],
+) -> FileResponse:
+    report = db.get(Report, report_id)
+    if report is None or report.owner_user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        path = media_path((report.metadata_json or {}).get("archive_path") or "")
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Documentation archive not found")
+    return FileResponse(path, media_type="application/zip", filename=f"{report.id}_documentation.zip",
+                        headers={"Cache-Control": "private, no-store"})
+
+
 def _report_read(report: Report) -> ReportRead:
     return ReportRead(
         id=report.id,
@@ -81,6 +98,7 @@ def _report_read(report: Report) -> ReportRead:
         status=report.status,
         generated_by=report.generated_by,
         generated_at=report.generated_at,
-        metadata_json=report.metadata_json,
+        metadata_json={key: value for key, value in (report.metadata_json or {}).items() if key != "archive_path"},
         download_url=f"/api/v1/reports/{report.id}/content" if report.status == "ready" else None,
+        archive_url=f"/api/v1/reports/{report.id}/archive" if report.status == "ready" and (report.metadata_json or {}).get("archive_path") else None,
     )

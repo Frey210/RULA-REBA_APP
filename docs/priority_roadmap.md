@@ -8,6 +8,12 @@ lifecycle sesi, capture berlatensi terbatas, bukti/skor/durasi yang konsisten,
 stabilitas Re-ID, kemudian pengujian multi-kamera. Status fitur "implemented" di
 bawah menunjukkan fondasi tersedia, bukan bahwa gate ketahanan tersebut sudah lulus.
 
+Pembaruan 0.2.1: [delivery lanjutan](stabilization_followup_2026-10-24.md).
+Workspace multi-kamera, laporan PDF/ZIP lengkap, diagnostik privat, pemisahan profil
+backend, dan clock sesi LAN tanpa internet sudah diimplementasikan. Validasi dua
+Pi fisik, 60 menit dengan beberapa worker, dan akurasi ergonomi referensi belum
+lulus; CAM_03 belum tersedia. Retensi destruktif otomatis sengaja nonaktif.
+
 ## Priority 0 - Stabilization Baseline
 
 Goal: memastikan fitur yang sudah ada tidak mudah rusak saat fitur baru ditambahkan.
@@ -135,7 +141,8 @@ Exit criteria:
 
 ## Priority 7 - Reports
 
-Status: baseline implemented with session PDF generation, authenticated report list, and download from Electron.
+Status: implemented in 0.2.1 with uncapped PDF documentation, original photos,
+sample CSVs/checksum manifest in ZIP, immutable report versions and owner-only downloads.
 
 Goal: membuat output yang bisa dibagikan untuk audit internal.
 
@@ -153,6 +160,10 @@ Exit criteria:
 - Report can be used without opening the application.
 
 ## Priority 8 - Deployment Hardening
+
+Status: backend packaged and smoke-tested with PDF/ZIP/diagnostics; source can
+explicitly reuse the installed data profile. Installer 0.2.1 built; clean-laptop
+installation/upgrade and hardware acceptance remain open.
 
 Goal: membuat aplikasi mudah dipakai tanpa terminal.
 

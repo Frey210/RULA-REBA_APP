@@ -2,7 +2,8 @@
 
 AI-Based Ergonomic Monitoring System for RULA/REBA assessment.
 
-This repository contains the FastAPI backend, PostgreSQL data model, analytics/reporting services, and the future Electron desktop application for the RULA/REBA ergonomic assessment platform.
+This repository contains the Electron desktop application, bundled FastAPI backend,
+local SQLite storage, and review/reporting services for RULA/REBA assessment.
 
 ## Product Documentation
 
@@ -13,21 +14,11 @@ Rebuild both PDFs with `py -3.12 scripts\generate_product_docs.py`.
 
 ## Current Status
 
-Implemented:
-
-- Architecture and API documentation.
-- Backend scaffold.
-- JWT/Bearer authentication foundation.
-- SQLAlchemy model foundation.
-- Alembic initial migration.
-- Smoke tests for auth, worker ownership, pairing, and session lifecycle.
-
-Planned next:
-
-- WebSocket ingest.
-- Edge pairing workflow.
-- Electron desktop app.
-- RULA/REBA scoring service extraction from the legacy reference repo.
+Version 0.2.1 includes authenticated pairing, multi-camera live workspace, scoped
+worker assignment, provisional scoring, evidence-backed manual review, complete
+PDF/ZIP documentation and private diagnostic export. Physical multi-Pi, 60-minute
+load and reference ergonomic accuracy tests are still release gates. See
+[stabilization delivery](docs/stabilization_delivery_2026-10-24.md).
 
 ## Backend Development
 
@@ -61,6 +52,18 @@ It uses `backend\.venv` and the local SQLite database `backend\dev_server.sqlite
 Set `ERGOQUIPT_DATABASE_URL` before launching only when a different database is required.
 Pending Alembic migrations are applied automatically before FastAPI starts.
 
+To test source with the accounts, media and camera pairing already used by the
+installed application, close the installed app/other backend first, then run:
+
+```powershell
+npm.cmd run electron:installed-profile
+```
+
+This explicitly reuses `%APPDATA%\ergosight-desktop` without changing its secret
+or resetting device ownership. The launcher rejects a different backend version
+or profile on port 8000. Default `npm.cmd run electron` remains a separate
+development profile; do not pair an owned camera into an empty development DB.
+
 ## Windows installer
 
 Build the complete Windows installer from the `desktop` directory:
@@ -69,9 +72,30 @@ Build the complete Windows installer from the `desktop` directory:
 npm.cmd run dist:win
 ```
 
-The output is `desktop\installer\ERGoSIGHT-Setup-0.1.0.exe`. It bundles Electron and a standalone FastAPI backend, applies database migrations automatically, creates desktop/start-menu shortcuts, and adds a private-network firewall rule for Raspberry Pi communication. A user installation does not require Python, Node.js, PostgreSQL, or this source repository.
+The default output is `desktop\installer\ERGoSIGHT-Setup-0.2.1.exe`. The tested
+delivery build is under `desktop\installer\stabilization-0.2.1\`. It bundles
+Electron and FastAPI, applies migrations, creates shortcuts and a private-network
+firewall rule. Normal installations require neither Python nor Node.js. Installer
+execution/upgrade on a clean second laptop remains to be verified.
 
-Production data, enrollment images, logs, and the generated JWT secret are stored under `%APPDATA%\ERGoSIGHT`. Uninstalling or upgrading the application preserves this directory.
+Production data, enrollment images, logs, and the generated JWT secret are stored
+under `%APPDATA%\ergosight-desktop`. Uninstalling/upgrading preserves this directory.
+
+## Session Documentation
+
+Stop a session, finish its review as appropriate, then open Reports and select
+Generate Report. PDF contains all observation/risk events, provisional and reviewed
+assessments, manual inputs/component breakdowns, measurements, worker/camera scope,
+and documentation photos. Missing or unverified information remains explicitly
+marked. ZIP + Photos includes the same PDF, original available photos, CSV samples,
+and a checksum/provenance manifest. Registry reference photos are labelled as
+identity references, not posture evidence. Older reports are never overwritten.
+
+Reports contain personal data. Downloads require the owning account; share exported
+files only with authorized recipients. Devices > Diagnostics exports a separate
+support ZIP without credentials, account details, raw logs, or photos. Automatic
+raw-data deletion is disabled; use History to explicitly delete an unwanted stopped
+session after exporting its documentation if needed.
 
 ## Connecting an edge device
 

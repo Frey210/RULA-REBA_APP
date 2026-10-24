@@ -1,7 +1,7 @@
 {
   "name": "ergosight-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "ERGoSIGHT AI-Based Ergonomic Monitoring System",
   "author": "ERGoSIGHT",
   "type": "module",
@@ -10,6 +10,7 @@
     "backend": "node electron/backend.cjs",
     "dev": "vite",
     "electron": "concurrently -k \"npm:backend\" \"npm:dev\" \"wait-on tcp:127.0.0.1:8000 http://127.0.0.1:5173 && node electron/launch.cjs\"",
+    "electron:installed-profile": "cross-env ERGOSIGHT_PROFILE=installed npm run electron",
     "build": "tsc -b && vite build",
     "build:backend": "powershell -ExecutionPolicy Bypass -File ../scripts/build-backend.ps1",
     "dist:win": "npm run build:backend && npm run build && electron-builder --win nsis",
@@ -55,6 +56,7 @@
       "dist/**/*",
       "electron/main.cjs",
       "electron/preload.cjs",
+      "electron/backend-profile.cjs",
       "package.json"
     ],
     "extraResources": [

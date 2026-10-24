@@ -2,6 +2,7 @@ const { spawn } = require('node:child_process')
 const fs = require('node:fs')
 const net = require('node:net')
 const path = require('node:path')
+const { installedEnvironment, backendIsReady } = require('./backend-profile.cjs')
 
 const backendDir = path.resolve(__dirname, '../../backend')
 const pythonPath = path.join(backendDir, '.venv', 'Scripts', 'python.exe')
@@ -9,8 +10,9 @@ let child = null
 let stopping = false
 
 async function main() {
+  const environment = backendEnvironment()
   if (await isPortOpen(8000)) {
-    if (!(await hasRequiredApi())) {
+    if (!(await backendIsReady(environment))) {
       console.error('An outdated or incompatible backend is already using http://127.0.0.1:8000.')
       console.error('Stop that process, then run npm.cmd run electron again.')
       process.exit(1)
@@ -31,10 +33,7 @@ async function main() {
     ['-c', "from app.services.database_backup import backup_database; backup_database(); from alembic.config import main; main(argv=['upgrade', 'head'])"],
     {
       cwd: backendDir,
-      env: {
-        ...process.env,
-        DATABASE_URL: process.env.ERGOQUIPT_DATABASE_URL || 'sqlite:///./dev_server.sqlite3',
-      },
+      env: environment,
       stdio: 'inherit',
       windowsHide: true,
     },
@@ -74,9 +73,13 @@ function startBackend() {
 }
 
 function backendEnvironment() {
+  const secretPath = path.join(backendDir, '.jwt-secret')
   return {
     ...process.env,
     DATABASE_URL: process.env.ERGOQUIPT_DATABASE_URL || 'sqlite:///./dev_server.sqlite3',
+    JWT_SECRET_KEY: process.env.JWT_SECRET_KEY || (fs.existsSync(secretPath) ? fs.readFileSync(secretPath, 'utf8').trim() : undefined),
+    ...(process.env.ERGOSIGHT_PROFILE === 'installed'
+      ? installedEnvironment(path.join(process.env.APPDATA || '', 'ergosight-desktop')) : {}),
   }
 }
 
@@ -92,17 +95,6 @@ function isPortOpen(port) {
     socket.once('timeout', () => finish(false))
     socket.once('error', () => finish(false))
   })
-}
-
-async function hasRequiredApi() {
-  try {
-    const response = await fetch('http://127.0.0.1:8000/openapi.json')
-    if (!response.ok) return false
-    const schema = await response.json()
-    return Boolean(schema.paths?.['/api/v1/camera-nodes/{camera_node_id}/frame'])
-  } catch {
-    return false
-  }
 }
 
 function keepAlive() {

@@ -5,6 +5,7 @@ from app.api.v1.routes import (
     analytics,
     camera_nodes,
     device_pairings,
+    diagnostics,
     event_reviews,
     reports,
     scoring,
@@ -16,6 +17,7 @@ from app.api.v1.routes import (
 
 api_router = APIRouter()
 api_router.include_router(version.router, tags=["version"])
+api_router.include_router(diagnostics.router, tags=["diagnostics"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 api_router.include_router(workers.router, prefix="/workers", tags=["workers"])

@@ -43,6 +43,7 @@ class EdgeDetectionEvent(BaseModel):
     timestamp: int
     frame_id: int = Field(ge=0)
     run_id: str = Field(min_length=1, max_length=36)
+    clock_source: Literal["device_clock", "backend_session_clock"] = "device_clock"
     detections: list[EdgeDetection] = Field(default_factory=list, max_length=32)
 
 
