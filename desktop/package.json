@@ -1,7 +1,7 @@
 {
   "name": "ergosight-desktop",
   "private": true,
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "ERGoSIGHT AI-Based Ergonomic Monitoring System",
   "author": "ERGoSIGHT",
   "type": "module",
@@ -13,7 +13,8 @@
     "electron:installed-profile": "cross-env ERGOSIGHT_PROFILE=installed npm run electron",
     "build": "tsc -b && vite build",
     "build:backend": "powershell -ExecutionPolicy Bypass -File ../scripts/build-backend.ps1",
-    "dist:win": "npm run build:backend && npm run build && electron-builder --win nsis",
+    "build:edge": "powershell -ExecutionPolicy Bypass -File ../scripts/build-edge-bundle.ps1",
+    "dist:win": "npm run build:edge && npm run build:backend && npm run build && electron-builder --win nsis",
     "lint": "eslint .",
     "preview": "vite preview"
   },
@@ -60,6 +61,10 @@
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "../dist/edge-update",
+        "to": "edge-update"
+      },
       {
         "from": "../backend/dist/ergosight-backend",
         "to": "backend"

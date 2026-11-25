@@ -86,8 +86,8 @@ function stopPackagedBackend() {
   backendLogFd = null
 }
 
-ipcMain.handle('devices:discover', async () => {
-  const targets = getLocalSubnetTargets(8765)
+ipcMain.handle('devices:discover', async (_event, hostnames) => {
+  const targets = getLocalSubnetTargets(8765, hostnames)
   return scanDevices(targets)
 })
 
@@ -141,12 +141,19 @@ async function edgeRequest(baseUrl, pathName, options = {}) {
   return response.json()
 }
 
-function getLocalSubnetTargets(port) {
+function getLocalSubnetTargets(port, hostnames = []) {
   const interfaces = os.networkInterfaces()
   const addresses = [
     { ip: '10.55.0.1', port, baseUrl: `http://10.55.0.1:${port}` },
     { ip: '10.42.0.1', port, baseUrl: `http://10.42.0.1:${port}` },
   ]
+  if (Array.isArray(hostnames)) {
+    for (const host of hostnames.slice(0, 64)) {
+      if (typeof host !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}(\.local)?$/.test(host)) continue
+      const name = host.endsWith('.local') ? host : `${host}.local`
+      addresses.push({ ip: name, port, baseUrl: `http://${name}:${port}` })
+    }
+  }
 
   for (const entries of Object.values(interfaces)) {
     for (const entry of entries ?? []) {
@@ -204,8 +211,10 @@ async function probeDevice(target, timeoutMs = 450) {
 async function scanDevices(targets) {
   // Probe direct-LAN gateways before broad scans can exhaust sockets/timeouts.
   const gateways = targets.filter((target) => target.ip.endsWith('.1'))
-  const remaining = targets.filter((target) => !target.ip.endsWith('.1'))
+  const names = targets.filter((target) => target.ip.endsWith('.local'))
+  const remaining = targets.filter((target) => !target.ip.endsWith('.1') && !target.ip.endsWith('.local'))
   const devices = (await Promise.all(gateways.map((target) => probeDevice(target, 1500)))).filter(Boolean)
+  devices.push(...(await Promise.all(names.map((target) => probeDevice(target, 3000)))).filter(Boolean))
   for (let offset = 0; offset < remaining.length; offset += 32) {
     const batch = await Promise.all(remaining.slice(offset, offset + 32).map((target) => probeDevice(target)))
     devices.push(...batch.filter(Boolean))

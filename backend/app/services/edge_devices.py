@@ -2,6 +2,8 @@ import hashlib
 import hmac
 import secrets
 import threading
+import socket
+import os
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
@@ -15,6 +17,16 @@ from app.models.user import User
 
 device_state_lock = threading.RLock()
 edge_http = httpx.Client(trust_env=False, limits=httpx.Limits(max_connections=12, max_keepalive_connections=8))
+
+
+def backend_url_for_edge(address: str) -> str:
+    peer = urlparse(validate_edge_url(address))
+    # UDP connect selects the OS route without transmitting a packet.
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+        route.settimeout(2)
+        route.connect((peer.hostname, peer.port or 80))
+        local_ip = route.getsockname()[0]
+    return f'http://{local_ip}:{int(os.getenv("PORT", "8000"))}'
 
 
 def validate_edge_url(value: str) -> str:

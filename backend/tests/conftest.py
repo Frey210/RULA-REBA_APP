@@ -49,6 +49,7 @@ def db_session() -> Generator[Session, None, None]:
 
 @pytest.fixture
 def edge_stub(monkeypatch):
+    monkeypatch.setattr('app.services.edge_devices.backend_url_for_edge', lambda _: 'http://10.55.1.125:8000')
     state = {"running": False, "ready": False, "cam_id": "CAM_01", "camera_available": True}
     device_id = "00000000-0000-4000-8000-000000000001"
     buffer = BytesIO()

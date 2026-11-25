@@ -67,7 +67,7 @@ import {
   Wifi,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useMemo, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import './App.css'
 import ergosightLogo from './assets/ergosight-logo.png'
@@ -1720,7 +1720,7 @@ function SettingsPage({
   const [devices, setDevices] = useState<DiscoveredDevice[]>([])
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
-  const [manualIp, setManualIp] = useState('10.55.0.1')
+  const [manualIp, setManualIp] = useState('10.55.1.1')
   const [backendReachableUrl, setBackendReachableUrl] = useState(backendUrl)
   const [networkDevice, setNetworkDevice] = useState<DiscoveredDevice | null>(null)
   const [networkStatus, setNetworkStatus] = useState<EdgeNetworkStatus | null>(null)
@@ -1732,7 +1732,21 @@ function SettingsPage({
   const [networkMessage, setNetworkMessage] = useState<string | null>(null)
   const [networkError, setNetworkError] = useState(false)
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false)
+  const [ethernetChoice, setEthernetChoice] = useState<'direct' | 'site'>('direct')
   const isElectron = Boolean(window.ergoquipt)
+
+  const recoverDevices = useEffectEvent(async () => {
+    if (!loading && !networkLoading && !pairing && !networkDevice && document.visibilityState === 'visible') {
+      try {
+        const sessions = await apiRequest<SessionRecord[]>('/api/v1/sessions', {}, token)
+        if (!sessions.some(session => ['preparing', 'running', 'stopping'].includes(session.status))) await discoverDevices()
+      } catch { /* A manual scan reports connection errors. */ }
+    }
+  })
+  useEffect(() => {
+    const timer = setInterval(() => recoverDevices(), 45000)
+    return () => clearInterval(timer)
+  }, [])
 
   async function exportDiagnostics() {
     setExportingDiagnostics(true)
@@ -1776,17 +1790,21 @@ function SettingsPage({
     setMessage(null)
     try {
       if (window.ergoquipt?.discoverDevices) {
-        const discovered = await window.ergoquipt.discoverDevices()
+        const discovered = await window.ergoquipt.discoverDevices(cameraNodes.flatMap(node => node.hostname ? [node.hostname] : []))
         setDevices(discovered)
-        await Promise.all(
+        const connections = await Promise.allSettled(
           discovered
             .filter((device) => device.paired)
             .map((device) => attachEdgeBaseUrl(device.cam_id, device.baseUrl)),
         )
-        setMessage(discovered.length ? `Found ${discovered.length} edge device(s).` : 'No devices found on LAN scan.')
+        await refreshData()
+        const failed = connections.filter(result => result.status === 'rejected').length
+        setMessage(discovered.length ? `Found ${discovered.length} edge device(s).${failed ? ` ${failed} connection(s) need attention: stop active sessions, update the Pi agent and check backend access on port 8000.` : ''}` : 'No devices found on LAN scan.')
       } else {
         await probeManualIp()
       }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'LAN scan failed. Check the network and try again.')
     } finally {
       setLoading(false)
     }
@@ -1807,6 +1825,7 @@ function SettingsPage({
       }
       const parsedUrl = new URL(baseUrl)
       const device = {
+        device_id: info.device_id,
         cam_id: info.cam_id,
         hostname: info.hostname,
         address: parsedUrl.hostname,
@@ -1828,7 +1847,6 @@ function SettingsPage({
         setBackendReachableUrl(inferBackendUrlFromEdge(baseUrl))
       }
     } catch (err) {
-      setDevices([])
       setMessage(err instanceof Error ? `Manual probe failed: ${err.message}` : 'Manual probe failed.')
     } finally {
       setLoading(false)
@@ -1871,11 +1889,10 @@ function SettingsPage({
     try {
       const node = cameraNodes.find((node) => node.cam_id === device.cam_id)
       if (!node) throw new Error('Pair this camera to your account first.')
-      const [status, scan] = await Promise.all([
-        apiRequest<EdgeNetworkStatus>(`/api/v1/camera-nodes/${node.id}/network/status`, {}, token),
-        apiRequest<{ networks: WifiNetwork[] }>(`/api/v1/camera-nodes/${node.id}/network/wifi`, {}, token),
-      ])
+      const status = await apiRequest<EdgeNetworkStatus>(`/api/v1/camera-nodes/${node.id}/network/status`, {}, token)
       setNetworkStatus(status)
+      setEthernetChoice(status.ethernet_mode?.mode === 'site' ? 'site' : 'direct')
+      const scan = await apiRequest<{ networks: WifiNetwork[] }>(`/api/v1/camera-nodes/${node.id}/network/wifi`, {}, token)
       setWifiNetworks(scan.networks)
       const connected = scan.networks.find((network) => network.connected)
       if (connected && !status.hotspot) setWifiSsid(connected.ssid)
@@ -1936,13 +1953,38 @@ function SettingsPage({
     const camera = cameraNodes.find((node) => node.cam_id === camId)
     if (!camera) return
     await apiRequest<CameraNode>(
-      `/api/v1/camera-nodes/${camera.id}`,
+      `/api/v1/camera-nodes/${camera.id}/reconnect`,
       {
-        method: 'PATCH',
+        method: 'POST',
         body: JSON.stringify({ edge_base_url: edgeBaseUrl }),
       },
       token,
     )
+  }
+
+  async function updateEthernet(confirm = false) {
+    if (!networkDevice) return
+    const node = cameraNodes.find(node => node.cam_id === networkDevice.cam_id)
+    if (!node) return
+    setNetworkLoading(true)
+    setNetworkError(false)
+    try {
+      await apiRequest(`/api/v1/camera-nodes/${node.id}/network/ethernet${confirm ? '/confirm' : ''}`, {
+        method: 'POST', ...(confirm ? {} : { body: JSON.stringify({ mode: ethernetChoice }) }),
+      }, token)
+      if (confirm) {
+        setNetworkStatus(await apiRequest<EdgeNetworkStatus>(`/api/v1/camera-nodes/${node.id}/network/status`, {}, token))
+        setNetworkMessage('Ethernet mode saved.')
+      } else {
+        setNetworkDevice(null)
+        setMessage(`${ethernetChoice === 'site' ? 'Connect the Pi to the location router or switch.' : 'Connect the Pi directly to this laptop.'} Run Scan LAN, open Network setup at its new Ethernet address, then Keep Ethernet mode within 3 minutes. Otherwise the previous mode is restored.`)
+      }
+    } catch (err) {
+      setNetworkError(true)
+      setNetworkMessage(err instanceof Error ? err.message : 'Network change failed. Reconnect and check its status.')
+    } finally {
+      setNetworkLoading(false)
+    }
   }
 
   async function probeDevice(baseUrl: string) {
@@ -2040,7 +2082,7 @@ function SettingsPage({
                 disabled={!device.paired || loading}
                 onClick={() => void openNetworkSetup(device)}
               >
-                Set up Wi-Fi
+                Network setup
               </Button>
               <Button size="small" variant="contained" disabled={!pairing || loading} onClick={() => pairDevice(device)}>
                 {pairing ? 'Pair' : 'Create code first'}
@@ -2053,7 +2095,7 @@ function SettingsPage({
       </Paper>
       <Dialog open={Boolean(networkDevice)} onClose={() => setNetworkDevice(null)} fullWidth maxWidth="sm">
         <Box component="form" onSubmit={submitWifi}>
-          <DialogTitle>Wi-Fi setup</DialogTitle>
+          <DialogTitle>Network setup</DialogTitle>
           <DialogContent dividers>
             <Stack spacing={2}>
               <Typography color="text.secondary">
@@ -2066,9 +2108,29 @@ function SettingsPage({
                     color={networkStatus.hotspot ? 'warning' : 'success'}
                     label={networkStatus.hotspot ? `Setup hotspot: ${networkStatus.hotspot_ssid}` : `Wi-Fi: ${networkStatus.wifi.connection ?? 'disconnected'}`}
                   />
-                  <Chip size="small" label={`Direct LAN: ${networkStatus.direct_lan_address}`} />
+                  <Chip size="small" label={`Ethernet: ${networkStatus.ethernet.address ?? 'disconnected'}`} />
                 </Stack>
               ) : null}
+              <Typography variant="subtitle2">Ethernet connection</Typography>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                <TextField select label="Ethernet mode" value={ethernetChoice} sx={{ flex: 1, minWidth: 0 }}
+                  disabled={networkLoading || !networkStatus?.ethernet_mode?.available || networkStatus.ethernet_mode.pending}
+                  onChange={event => setEthernetChoice(event.target.value as 'direct' | 'site')}>
+                  <MenuItem value="direct">Direct to laptop</MenuItem>
+                  <MenuItem value="site">Location router / switch (DHCP)</MenuItem>
+                </TextField>
+                <Button variant="outlined" disabled={networkLoading || !networkStatus?.ethernet_mode?.available || networkStatus.ethernet_mode.pending || ethernetChoice === networkStatus.ethernet_mode.mode}
+                  onClick={() => void updateEthernet()}>Apply mode</Button>
+              </Stack>
+              {networkStatus && !networkStatus.ethernet_mode?.available ? <Alert severity="warning">Update this Pi and install its network-mode helper before changing Ethernet mode.</Alert> : null}
+              {networkStatus?.ethernet_mode?.pending ? (
+                <Alert severity="warning" action={<Button color="inherit" size="small" disabled={networkLoading} onClick={() => void updateEthernet(true)}>Keep Ethernet mode</Button>}>
+                  Unconfirmed network change. Reconnect through the new Ethernet IP before keeping it. Automatic rollback after 3 minutes.
+                </Alert>
+              ) : ethernetChoice !== networkStatus?.ethernet_mode?.mode && networkStatus?.ethernet_mode?.available ? (
+                <Alert severity="warning">The connection will disconnect. Reconnect and confirm within 3 minutes. Location mode requires a router or DHCP server; a switch alone does not provide addresses.</Alert>
+              ) : null}
+              <Divider />
               <Stack direction="row" spacing={2} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
                 <Typography variant="subtitle2">Available networks</Typography>
                 <IconButton
@@ -2087,7 +2149,7 @@ function SettingsPage({
                     onClick={() => setWifiSsid(network.ssid)}
                   >
                     <ListItemIcon><Wifi size={18} /></ListItemIcon>
-                    <ListItemText primary={network.ssid} secondary={`${network.security} · ${network.signal}% signal`} />
+                    <ListItemText sx={{ color: 'text.primary' }} primary={network.ssid} secondary={`${network.security} · ${network.signal}% signal`} />
                     {network.connected ? <Chip size="small" color="success" label="Connected" /> : null}
                   </ListItemButton>
                 ))}
@@ -2100,7 +2162,7 @@ function SettingsPage({
                 label="Network name (SSID)"
                 value={wifiSsid}
                 onChange={(event) => setWifiSsid(event.target.value)}
-                slotProps={{ htmlInput: { maxLength: 32 } }}
+                slotProps={{ htmlInput: { maxLength: 32 }, inputLabel: { shrink: true } }}
               />
               <TextField
                 label="Wi-Fi password"

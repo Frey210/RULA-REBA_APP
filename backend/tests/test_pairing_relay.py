@@ -7,7 +7,8 @@ from app.models.user import User
 
 
 @pytest.fixture
-def pairing_request(db_session):
+def pairing_request(db_session, monkeypatch):
+    monkeypatch.setattr('app.api.v1.routes.device_pairings.backend_url_for_edge', lambda _: 'http://10.55.0.125:8000')
     user = User(email="pairing@test.local", username="pairing", password_hash="unused")
     db_session.add(user)
     db_session.flush()

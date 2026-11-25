@@ -43,3 +43,15 @@ test('one Pi on LAN and Wi-Fi appears once, retaining its first gateway address'
   assert.equal(result.length, 2)
   assert.equal(result[0].ip, '10.55.1.1')
 })
+
+test('paired mDNS names are bounded and validated before discovery', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../electron/main.cjs'), 'utf8')
+  const start = source.indexOf('function getLocalSubnetTargets(')
+  const end = source.indexOf('async function probeDevice(', start)
+  const context = vm.createContext({ os: { networkInterfaces: () => ({}) } })
+  vm.runInContext(source.slice(start, end), context)
+  const targets = context.getLocalSubnetTargets(8765, ['ergoquipt-rr', 'cam.local', '../invalid', 'cam.local', 'user@host'])
+  assert.equal(targets.filter(target => target.ip.endsWith('.local')).length, 2)
+  assert.ok(targets.some(target => target.baseUrl === 'http://ergoquipt-rr.local:8765'))
+  assert.equal(context.getLocalSubnetTargets(8765, 'invalid-array').length, 2)
+})

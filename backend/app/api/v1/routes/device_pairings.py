@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,10 +16,20 @@ from app.models.camera_node import CameraNode
 from app.models.device_pairing import DevicePairing
 from app.models.user import User
 from app.schemas.device_pairing import PairingComplete, PairingCompleteRead, PairingTokenRead, PairingRelay
-from app.services.edge_devices import issue_device_token, validate_edge_url, device_token, device_state_lock, edge_http
+from app.services.edge_devices import issue_device_token, validate_edge_url, device_token, device_state_lock, edge_http, authenticate_device, backend_url_for_edge
 
 router = APIRouter()
 random = SystemRandom()
+
+
+@router.get('/check/{cam_id}')
+def check_device_backend(cam_id: str, db: Annotated[Session, Depends(get_db)],
+                         authorization: Annotated[str | None, Header()] = None) -> dict:
+    try:
+        camera = authenticate_device(db, cam_id, authorization)
+    except ValueError as exc:
+        raise HTTPException(403, 'Device authentication failed') from exc
+    return {'cam_id': camera.cam_id, 'device_id': (camera.metadata_json or {}).get('device_id')}
 
 
 @router.post("", response_model=PairingTokenRead, status_code=status.HTTP_201_CREATED)
@@ -109,7 +119,7 @@ def relay_pairing(payload: PairingRelay, current_user: Annotated[User, Depends(g
         raise HTTPException(403, "This device belongs to another account")
     try:
         address = validate_edge_url(payload.edge_base_url)
-        backend = validate_edge_url(payload.backend_url)
+        backend = backend_url_for_edge(address)
         discovery = edge_http.get(address + "/pairing/info", timeout=2)
         discovery.raise_for_status()
         info = discovery.json()

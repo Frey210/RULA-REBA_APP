@@ -14,7 +14,11 @@ Rebuild both PDFs with `py -3.12 scripts\generate_product_docs.py`.
 
 ## Current Status
 
-Version 0.2.3 includes authenticated pairing, multi-camera live workspace, scoped
+Version 0.2.4 includes safe Direct/Location Ethernet mode selection, DHCP client
+support, authenticated two-way network reconnection and an offline Pi update
+bundle. See [network setup](docs/network_setup_0.2.4.md).
+
+It also includes authenticated pairing, multi-camera live workspace, scoped
 worker assignment, provisional scoring, evidence-backed manual review, complete
 PDF/Excel/ZIP documentation and private diagnostic export. Physical multi-Pi, 60-minute
 load and reference ergonomic accuracy tests are still release gates. See

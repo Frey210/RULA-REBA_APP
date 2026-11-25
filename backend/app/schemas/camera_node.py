@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 from app.services.edge_devices import validate_edge_url
@@ -32,3 +33,16 @@ class CameraNodeRead(BaseModel):
     metadata_json: dict
 
     model_config = {"from_attributes": True}
+
+
+class CameraReconnect(BaseModel):
+    edge_base_url: str = Field(max_length=500)
+
+    @field_validator('edge_base_url')
+    @classmethod
+    def valid_url(cls, value):
+        return validate_edge_url(value)
+
+
+class EthernetModeRequest(BaseModel):
+    mode: Literal['direct', 'site']

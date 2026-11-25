@@ -3,7 +3,7 @@ export {}
 declare global {
   interface Window {
     ergoquipt?: {
-      discoverDevices: () => Promise<DiscoveredDevice[]>
+      discoverDevices: (hostnames?: string[]) => Promise<DiscoveredDevice[]>
       pairDevice: (payload: {
         baseUrl: string
         pairingCode: string
@@ -25,6 +25,7 @@ declare global {
 }
 
 export type DiscoveredDevice = {
+  device_id?: string
   cam_id: string
   hostname: string
   address: string
@@ -42,6 +43,7 @@ export type NetworkInterfaceStatus = {
 }
 
 export type EdgeNetworkStatus = {
+  ethernet_mode?: { available: boolean; mode: string; pending: boolean; target?: string; result?: string }
   wifi: NetworkInterfaceStatus
   ethernet: NetworkInterfaceStatus
   hotspot: boolean

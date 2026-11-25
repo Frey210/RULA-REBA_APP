@@ -484,7 +484,7 @@ def _metadata_datetime(value: object) -> datetime | None:
 
 
 def _start_edges_for_session(session: Session, current_user: User, db: DbSession) -> list[dict]:
-    from app.services.edge_devices import edge_request, refresh_camera
+    from app.services.edge_devices import edge_request, refresh_camera, backend_url_for_edge
     cameras = _session_cameras(session, current_user, db)
     session_code = session.session_code
     run_ids = session.metadata_json["edge_runs"]
@@ -507,12 +507,13 @@ def _start_edges_for_session(session: Session, current_user: User, db: DbSession
             camera = targets[cam_id]
             response = edge_request(camera, "POST", "/detection/start",
                 json={"session_id": session_code, "run_id": run_id,
+                      "backend_url": backend_url_for_edge(camera.metadata_json['edge_base_url']),
                       "backend_timestamp_ms": int(datetime.now(UTC).timestamp() * 1000)}, timeout=16)
             state = response.json()
             if not state.get("ready") or not state.get("running") or state.get("run_id") != run_id or state.get("session_id") != session_code:
                 raise ValueError("Pipeline did not confirm this session")
             return {"cam_id": cam_id, "status": "started", "detail": "Camera ready"}
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError, OSError):
             return results[cam_id]
 
     with ThreadPoolExecutor(max_workers=4, thread_name_prefix="camera-start") as pool:

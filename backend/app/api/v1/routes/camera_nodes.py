@@ -4,15 +4,76 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from types import SimpleNamespace
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.camera_node import CameraNode
 from app.models.user import User
-from app.schemas.camera_node import CameraNodeRead, CameraNodeUpdate
-from app.services.edge_devices import camera_is_fresh, edge_request, owned_camera, device_state_lock
+from app.schemas.camera_node import CameraNodeRead, CameraNodeUpdate, CameraReconnect, EthernetModeRequest
+from app.services.edge_devices import camera_is_fresh, edge_request, owned_camera, device_state_lock, backend_url_for_edge, refresh_camera
 
 router = APIRouter()
+
+
+def require_network_idle(camera, db):
+    from app.models.session import Session as AssessmentSession
+    for session in db.scalars(select(AssessmentSession).where(AssessmentSession.status.in_(['preparing', 'running', 'stopping']))):
+        if camera.cam_id in (session.metadata_json or {}).get('camera_node_ids', []):
+            raise HTTPException(409, 'Stop the session before changing its camera network')
+
+
+@router.post('/{camera_node_id}/reconnect', response_model=CameraNodeRead)
+def reconnect_camera(camera_node_id: str, payload: CameraReconnect,
+                     current_user: Annotated[User, Depends(get_current_user)],
+                     db: Annotated[Session, Depends(get_db)]) -> CameraNode:
+    with device_state_lock:
+        camera = owned_camera(db, camera_node_id, current_user.id)
+        require_network_idle(camera, db)
+        metadata = {**(camera.metadata_json or {}), 'edge_base_url': payload.edge_base_url}
+        candidate = SimpleNamespace(id=camera.id, cam_id=camera.cam_id, owner_user_id=camera.owner_user_id,
+                                    node_credential_hash=camera.node_credential_hash, metadata_json=metadata)
+        try:
+            info = edge_request(candidate, 'GET', '/stream/status', timeout=3).json()
+            if info.get('cam_id') != camera.cam_id:
+                raise ValueError('Camera identity mismatch')
+            backend = backend_url_for_edge(payload.edge_base_url)
+            result = edge_request(candidate, 'POST', '/network/reconnect', timeout=8,
+                                  json={'backend_url': backend}).json()
+            if result.get('device_id') != metadata.get('device_id') or result.get('status') != 'connected':
+                raise ValueError('Reconnect identity mismatch')
+        except (httpx.HTTPError, ValueError, OSError) as exc:
+            raise HTTPException(409, 'Cannot verify both connection directions. Update the Pi agent, check the owning app and allow its backend on port 8000.') from exc
+        metadata['backend_url'] = backend
+        camera.metadata_json = metadata
+        refresh_camera(camera)
+        db.commit()
+        db.refresh(camera)
+        return camera
+
+
+@router.post('/{camera_node_id}/network/ethernet', status_code=202)
+def camera_ethernet(camera_node_id: str, payload: EthernetModeRequest,
+                    current_user: Annotated[User, Depends(get_current_user)],
+                    db: Annotated[Session, Depends(get_db)]) -> dict:
+    with device_state_lock:
+        camera = owned_camera(db, camera_node_id, current_user.id)
+        require_network_idle(camera, db)
+        try:
+            return edge_request(camera, 'POST', '/network/ethernet', json=payload.model_dump(), timeout=5).json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(409, 'Network change was not confirmed. Check the Pi network status; it may still be switching or require an agent update.') from exc
+
+
+@router.post('/{camera_node_id}/network/ethernet/confirm')
+def camera_ethernet_confirm(camera_node_id: str, current_user: Annotated[User, Depends(get_current_user)],
+                            db: Annotated[Session, Depends(get_db)]) -> dict:
+    camera = owned_camera(db, camera_node_id, current_user.id)
+    require_network_idle(camera, db)
+    try:
+        return edge_request(camera, 'POST', '/network/ethernet/confirm', timeout=5).json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(409, 'Use Scan LAN or Probe IP to reconnect through the new Ethernet address before keeping this mode.') from exc
 
 
 @router.get("", response_model=list[CameraNodeRead])
@@ -135,6 +196,7 @@ def camera_wifi_connect(camera_node_id: str, payload: dict,
                         current_user: Annotated[User, Depends(get_current_user)],
                         db: Annotated[Session, Depends(get_db)]) -> dict:
     camera = owned_camera(db, camera_node_id, current_user.id)
+    require_network_idle(camera, db)
     try:
         return edge_request(camera, "POST", "/network/wifi/connect", json=payload).json()
     except (httpx.HTTPError, ValueError) as exc:
