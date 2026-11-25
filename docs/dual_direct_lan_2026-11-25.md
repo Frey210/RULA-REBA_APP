@@ -73,3 +73,29 @@ No simultaneous detection session, inference throughput, long-running soak,
 cross-camera identity accuracy, reboot or power-cycle test was performed here.
 CAM_02's OS clock is still behind the client date; this change did not alter the
 clock. Existing session capture clock anchoring is separate from OS time.
+
+## CAM_01 Follow-Up
+
+After replacing CAM_03 with CAM_01 on the laptop Ethernet port:
+
+- Confirmed hostname `ergoquipt-rr` and UUID
+  `886cd0e0-8762-40e9-847d-0932fb6db4a5` through its trusted SSH key and pairing info.
+- Upgraded agent from `fbd2b4e` to `9f2f3a5` via the local Git bundle.
+- Backed up network configuration, `.env`, and edge state before migration.
+- Persistent and live LAN configuration now use `10.55.1.1/24`; DHCP pool is
+  `10.55.1.100` through `.200`. Removed the old `10.55.0.1` address.
+- Laptop Ethernet renewed to `10.55.1.125`; CAM_02 remains on Ethernet 2 with
+  laptop address `10.55.2.132`. No overlapping camera subnets remain.
+- Updated saved backend callback to `http://10.55.1.125:8000`; the Pi reached
+  that backend with HTTP 200.
+- Existing CAM_01 credentials were present and successfully authenticated.
+  Contrary to the earlier deployment's legacy state, no pairing reset or new
+  pairing is required now. Updated its stored device URL only after UUID and
+  credential verification, with an installed database backup.
+- The authenticated preview returned a JPEG (26,177 bytes in one check), and
+  stream status reported `camera_available=true`. The first preview request
+  immediately after service restart returned 503 during warm-up; retry passed.
+- Service remains active and enabled; kernel/EEPROM and hostname are unchanged.
+
+CAM_03 is unplugged during this follow-up. Simultaneous detection and reboot
+remain untested; no assessment was started automatically.
