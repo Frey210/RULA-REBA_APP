@@ -185,6 +185,7 @@ async function probeDevice(target, timeoutMs = 450) {
       return null
     }
     return {
+      device_id: info.device_id,
       cam_id: info.cam_id,
       hostname: info.hostname,
       address: target.ip,
@@ -209,7 +210,12 @@ async function scanDevices(targets) {
     const batch = await Promise.all(remaining.slice(offset, offset + 32).map((target) => probeDevice(target)))
     devices.push(...batch.filter(Boolean))
   }
-  return devices
+  const unique = new Map()
+  for (const device of devices) {
+    const identity = device.device_id || device.baseUrl
+    if (!unique.has(identity)) unique.set(identity, device)
+  }
+  return [...unique.values()]
 }
 
 function normalizeBackendUrlForDevice(backendUrl, deviceBaseUrl) {

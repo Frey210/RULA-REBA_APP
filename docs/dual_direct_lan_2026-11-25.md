@@ -99,3 +99,9 @@ After replacing CAM_03 with CAM_01 on the laptop Ethernet port:
 
 CAM_03 is unplugged during this follow-up. Simultaneous detection and reboot
 remain untested; no assessment was started automatically.
+
+The follow-up scan also found CAM_01 over Wi-Fi at `192.168.1.38`. Discovery now
+deduplicates by device UUID, preserving the gateway result found first, so the
+same Pi does not appear twice or overwrite its LAN address with its Wi-Fi URL.
+The latest local unpacked build includes this fix at
+`desktop/installer/dual-lan-identity-0.2.3/win-unpacked/ERGoSIGHT.exe`.
