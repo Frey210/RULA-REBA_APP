@@ -88,10 +88,7 @@ function stopPackagedBackend() {
 
 ipcMain.handle('devices:discover', async () => {
   const targets = getLocalSubnetTargets(8765)
-  const results = await Promise.allSettled(targets.map((target) => probeDevice(target)))
-  return results
-    .filter((result) => result.status === 'fulfilled' && result.value)
-    .map((result) => result.value)
+  return scanDevices(targets)
 })
 
 ipcMain.handle('devices:pair', async (_event, payload) => {
@@ -173,9 +170,9 @@ function getLocalSubnetTargets(port) {
   return [...new Map(addresses.map((target) => [target.baseUrl, target])).values()]
 }
 
-async function probeDevice(target) {
+async function probeDevice(target, timeoutMs = 450) {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 450)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetch(`${target.baseUrl}/pairing/info`, {
       signal: controller.signal,
@@ -201,6 +198,18 @@ async function probeDevice(target) {
   } finally {
     clearTimeout(timeout)
   }
+}
+
+async function scanDevices(targets) {
+  // Probe direct-LAN gateways before broad scans can exhaust sockets/timeouts.
+  const gateways = targets.filter((target) => target.ip.endsWith('.1'))
+  const remaining = targets.filter((target) => !target.ip.endsWith('.1'))
+  const devices = (await Promise.all(gateways.map((target) => probeDevice(target, 1500)))).filter(Boolean)
+  for (let offset = 0; offset < remaining.length; offset += 32) {
+    const batch = await Promise.all(remaining.slice(offset, offset + 32).map((target) => probeDevice(target)))
+    devices.push(...batch.filter(Boolean))
+  }
+  return devices
 }
 
 function normalizeBackendUrlForDevice(backendUrl, deviceBaseUrl) {
